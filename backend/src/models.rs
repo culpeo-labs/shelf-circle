@@ -1,0 +1,131 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub handle: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    pub locale: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUser {
+    pub handle: String,
+    pub display_name: String,
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct Book {
+    pub id: Uuid,
+    pub canonical_title: String,
+    pub primary_author: Option<String>,
+    pub open_library_work_id: Option<String>,
+    pub google_books_volume_id: Option<String>,
+    pub cover_image_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct BookEdition {
+    pub id: Uuid,
+    pub book_id: Uuid,
+    pub language: String,
+    pub isbn_13: Option<String>,
+    pub isbn_10: Option<String>,
+    pub title: String,
+    pub publisher: Option<String>,
+    pub cover_image_url: Option<String>,
+    pub source: String,
+    pub source_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Input for resolving/upserting a book from an external source (Open Library or Google Books).
+/// The book data service is responsible for producing this after normalization.
+#[derive(Debug, Deserialize)]
+pub struct ResolvedBook {
+    pub canonical_title: String,
+    pub primary_author: Option<String>,
+    pub language: String,
+    pub isbn_13: Option<String>,
+    pub isbn_10: Option<String>,
+    pub edition_title: String,
+    pub publisher: Option<String>,
+    pub cover_image_url: Option<String>,
+    pub source: String,
+    pub source_id: String,
+    pub open_library_work_id: Option<String>,
+    pub google_books_volume_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, sqlx::Type, Serialize, Deserialize, PartialEq, Eq)]
+#[sqlx(type_name = "reading_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingStatus {
+    WantToRead,
+    CurrentlyReading,
+    Finished,
+    DidNotFinish,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct BookStatus {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub book_id: Uuid,
+    pub status: ReadingStatus,
+    pub progress_percent: Option<i16>,
+    /// 1-5, only set once status is `finished` or `did_not_finish`.
+    pub rating: Option<i16>,
+    pub updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetBookStatus {
+    /// The acting user is taken from the auth token, not the body.
+    pub book_id: Uuid,
+    pub status: ReadingStatus,
+    pub progress_percent: Option<i16>,
+    /// 1-5. Allowed only with `finished` / `did_not_finish`; cleared on any
+    /// other status.
+    pub rating: Option<i16>,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct Recommendation {
+    pub id: Uuid,
+    pub from_user_id: Uuid,
+    pub to_user_id: Uuid,
+    pub book_id: Uuid,
+    pub note: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateRecommendation {
+    /// The sender is taken from the auth token, not the body.
+    pub to_user_id: Uuid,
+    pub book_id: Uuid,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateFriendship {
+    /// The other person's handle; the caller is taken from the auth token.
+    pub user_handle: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, FromRow)]
+pub struct Friendship {
+    pub id: Uuid,
+    pub user_a_id: Uuid,
+    pub user_b_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}

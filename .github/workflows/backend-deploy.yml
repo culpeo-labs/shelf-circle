@@ -1,0 +1,95 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC federated login to Azure
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      LOCATION: ${{ vars.AZURE_LOCATION }}
+      IMAGE_REPO: shelf-circle-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure resource group
+        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+
+      - name: Deploy registry
+        id: registry
+        run: |
+          outputs=$(az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file backend/infra/registry.bicep \
+            --parameters namePrefix=shelfcircle environmentName=prod \
+            --query properties.outputs --output json)
+          echo "acr_name=$(echo "$outputs" | jq -r '.acrName.value')" >> "$GITHUB_OUTPUT"
+          echo "acr_login_server=$(echo "$outputs" | jq -r '.acrLoginServer.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        run: |
+          az acr build \
+            --registry "${{ steps.registry.outputs.acr_name }}" \
+            --image "$IMAGE_REPO:${{ github.sha }}" \
+            --image "$IMAGE_REPO:latest" \
+            backend
+
+      - name: Deploy application
+        id: app
+        run: |
+          outputs=$(az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --template-file backend/infra/main.bicep \
+            --parameters backend/infra/main.parameters.json \
+            --parameters \
+              acrName="${{ steps.registry.outputs.acr_name }}" \
+              containerImage="${{ steps.registry.outputs.acr_login_server }}/$IMAGE_REPO:${{ github.sha }}" \
+              hankoApiUrl="${{ vars.HANKO_API_URL }}" \
+              pgAdminLogin="${{ vars.PG_ADMIN_LOGIN }}" \
+              pgAdminPassword="${{ secrets.PG_ADMIN_PASSWORD }}" \
+              googleBooksApiKey="${{ secrets.GOOGLE_BOOKS_API_KEY }}" \
+            --query properties.outputs --output json)
+          fqdn=$(echo "$outputs" | jq -r '.containerAppFqdn.value')
+          echo "fqdn=$fqdn" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deployed"
+            echo ""
+            echo "- API: https://$fqdn"
+            echo "- Image tag: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "https://${{ steps.app.outputs.fqdn }}/health" | grep -q ok; then
+              echo "health check passed"
+              exit 0
+            fi
+            echo "waiting for the new revision to come up ($i/30)..."
+            sleep 10
+          done
+          echo "health check did not pass in time" >&2
+          exit 1

@@ -1,0 +1,10 @@
+target/
+.git/
+.gitignore
+.github/
+.devcontainer/
+infra/
+spec/
+*.md
+.env
+.env.*

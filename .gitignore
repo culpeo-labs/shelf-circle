@@ -1,0 +1,6 @@
+# Monorepo root. Each package keeps its own .gitignore for language-specific
+# build output (backend/.gitignore, etc.); this catches stray tooling output
+# (e.g. an IDE's rust-analyzer flycheck) that lands at the repo root regardless
+# of which package it came from.
+/target
+.DS_Store
