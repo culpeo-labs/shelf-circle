@@ -26,7 +26,7 @@ jobs:
       LOCATION: ${{ vars.AZURE_LOCATION }}
       IMAGE_REPO: shelf-circle-backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
