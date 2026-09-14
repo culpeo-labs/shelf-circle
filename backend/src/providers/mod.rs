@@ -178,3 +178,74 @@ pub(crate) fn normalize_language(code: &str) -> String {
     }
     .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(source: &'static str, title: &str, author: &str) -> BookSearchResult {
+        BookSearchResult {
+            source,
+            source_id: format!("{source}-{title}"),
+            title: title.to_string(),
+            authors: vec![author.to_string()],
+            first_publish_year: None,
+            cover_image_url: None,
+            languages: vec![],
+            open_library_work_id: None,
+            google_books_volume_id: None,
+        }
+    }
+
+    #[test]
+    fn normalize_language_maps_iso_639_2_and_common_aliases() {
+        assert_eq!(normalize_language("eng"), "en");
+        assert_eq!(normalize_language("ENG"), "en", "case-insensitive");
+        assert_eq!(
+            normalize_language("es"),
+            "es",
+            "already-BCP-47 passes through"
+        );
+        assert_eq!(normalize_language("spa"), "es");
+        assert_eq!(normalize_language("zho"), "zh");
+        assert_eq!(normalize_language("chi"), "zh");
+    }
+
+    #[test]
+    fn normalize_language_passes_through_unknown_codes() {
+        assert_eq!(normalize_language("und"), "und");
+        assert_eq!(normalize_language("xx-made-up"), "xx-made-up");
+    }
+
+    #[test]
+    fn merge_skips_entries_matching_on_title_and_first_author_case_insensitively() {
+        let mut into = vec![result("open_library", "Dune", "Frank Herbert")];
+        let extra = vec![
+            result("google_books", "dune", "frank herbert"), // dup, different case
+            result("google_books", "Dune Messiah", "Frank Herbert"), // distinct
+        ];
+
+        merge(&mut into, extra);
+
+        assert_eq!(into.len(), 2, "the case-insensitive duplicate was dropped");
+        assert_eq!(into[1].title, "Dune Messiah");
+        assert_eq!(into[1].source, "google_books");
+    }
+
+    #[test]
+    fn merge_treats_missing_author_consistently() {
+        let mut r = result("open_library", "Untitled Work", "");
+        r.authors.clear();
+        let mut into = vec![r];
+
+        let mut dup = result("google_books", "Untitled Work", "");
+        dup.authors.clear();
+        merge(&mut into, vec![dup]);
+
+        assert_eq!(
+            into.len(),
+            1,
+            "two authorless entries with the same title dedupe"
+        );
+    }
+}

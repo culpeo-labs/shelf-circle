@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/backend-ci.yml"
   push:
     branches:
       - main
     paths:
       - "backend/**"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/backend-ci.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -22,6 +22,23 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # The integration tests (backend/tests/) create their own ephemeral
+    # database per test against this server and run the real migrations
+    # against it — see backend/tests/support/mod.rs.
+    services:
+      postgres:
+        image: postgres:14.1
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
 
@@ -40,6 +57,9 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
 
       - name: Build
         run: cargo build --release --locked

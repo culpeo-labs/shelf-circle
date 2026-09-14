@@ -49,7 +49,18 @@ pub async fn search(
     query: &str,
     limit: usize,
 ) -> Result<Vec<BookSearchResult>, ProviderError> {
-    let url = format!("{BASE}/search.json");
+    search_at(http, BASE, query, limit).await
+}
+
+/// `search`'s actual implementation, taking the base URL as a parameter so
+/// tests can point it at a mock server instead of the real Open Library.
+async fn search_at(
+    http: &reqwest::Client,
+    base: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<BookSearchResult>, ProviderError> {
+    let url = format!("{base}/search.json");
     let resp = http
         .get(&url)
         .query(&[
@@ -165,9 +176,19 @@ async fn get_json<T: serde::de::DeserializeOwned>(
 }
 
 pub async fn resolve(http: &reqwest::Client, work_id: &str) -> Result<ResolvedBook, ProviderError> {
+    resolve_at(http, BASE, work_id).await
+}
+
+/// `resolve`'s actual implementation, taking the base URL as a parameter so
+/// tests can point it at a mock server instead of the real Open Library.
+async fn resolve_at(
+    http: &reqwest::Client,
+    base: &str,
+    work_id: &str,
+) -> Result<ResolvedBook, ProviderError> {
     let work_id = strip_prefix(work_id, "/works/").trim();
 
-    let work: Work = get_json(http, &format!("{BASE}/works/{work_id}.json"))
+    let work: Work = get_json(http, &format!("{base}/works/{work_id}.json"))
         .await?
         .ok_or_else(|| ProviderError::NotFound {
             provider: SOURCE,
@@ -178,7 +199,7 @@ pub async fn resolve(http: &reqwest::Client, work_id: &str) -> Result<ResolvedBo
     let primary_author = match work.authors.first() {
         Some(a) => {
             let key = strip_prefix(&a.author.key, "/authors/");
-            get_json::<AuthorDoc>(http, &format!("{BASE}/authors/{key}.json"))
+            get_json::<AuthorDoc>(http, &format!("{base}/authors/{key}.json"))
                 .await
                 .ok()
                 .flatten()
@@ -192,7 +213,7 @@ pub async fn resolve(http: &reqwest::Client, work_id: &str) -> Result<ResolvedBo
     // English one, then any with an ISBN-13, then whatever's first.
     let editions = get_json::<EditionsResponse>(
         http,
-        &format!("{BASE}/works/{work_id}/editions.json?limit=50"),
+        &format!("{base}/works/{work_id}/editions.json?limit=50"),
     )
     .await?
     .map(|r| r.entries)
@@ -244,4 +265,156 @@ pub async fn resolve(http: &reqwest::Client, work_id: &str) -> Result<ResolvedBo
         open_library_work_id: Some(work_id.to_string()),
         google_books_volume_id: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn search_normalizes_and_dedupes_languages_and_drops_untitled_docs() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "docs": [
+                    {
+                        "key": "/works/OL1W",
+                        "title": "Dune",
+                        "author_name": ["Frank Herbert"],
+                        "first_publish_year": 1965,
+                        "cover_i": 123,
+                        "language": ["eng", "eng", "spa"]
+                    },
+                    // No title -> Open Library sometimes returns stub docs;
+                    // these aren't real search hits and must be dropped.
+                    { "key": "/works/OL2W", "title": "" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let results = search_at(&http, &server.uri(), "dune", 20).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert_eq!(r.source, "open_library");
+        assert_eq!(r.source_id, "OL1W", "the /works/ prefix is stripped");
+        assert_eq!(r.open_library_work_id.as_deref(), Some("OL1W"));
+        assert_eq!(r.title, "Dune");
+        assert_eq!(r.authors, vec!["Frank Herbert"]);
+        assert_eq!(r.first_publish_year, Some(1965));
+        assert_eq!(
+            r.cover_image_url.as_deref(),
+            Some("https://covers.openlibrary.org/b/id/123-L.jpg")
+        );
+        assert_eq!(r.languages, vec!["en", "es"], "normalized and deduped");
+    }
+
+    #[tokio::test]
+    async fn search_surfaces_non_success_status_as_provider_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search.json"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let err = search_at(&http, &server.uri(), "dune", 20)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ProviderError::Status { status, .. } if status == 503
+        ));
+    }
+
+    #[tokio::test]
+    async fn resolve_prefers_the_english_edition_and_fills_in_author_and_cover() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL1W.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "title": "Dune",
+                "authors": [{ "author": { "key": "/authors/OL1A" } }],
+                "covers": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/authors/OL1A.json"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "name": "Frank Herbert" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL1W/editions.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "entries": [
+                    {
+                        "title": "Dune (French)",
+                        "isbn_13": ["9782000000000"],
+                        "languages": [{ "key": "/languages/fre" }]
+                    },
+                    {
+                        "title": "Dune",
+                        "isbn_13": ["9780000000001"],
+                        "isbn_10": ["0000000001"],
+                        "publishers": ["Ace Books"],
+                        "languages": [{ "key": "/languages/eng" }],
+                        "covers": [111]
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let book = resolve_at(&http, &server.uri(), "/works/OL1W")
+            .await
+            .unwrap();
+
+        assert_eq!(book.canonical_title, "Dune");
+        assert_eq!(book.primary_author.as_deref(), Some("Frank Herbert"));
+        assert_eq!(
+            book.language, "en",
+            "the English edition is preferred over the first one"
+        );
+        assert_eq!(book.edition_title, "Dune");
+        assert_eq!(book.isbn_13.as_deref(), Some("9780000000001"));
+        assert_eq!(book.publisher.as_deref(), Some("Ace Books"));
+        assert_eq!(
+            book.cover_image_url.as_deref(),
+            Some("https://covers.openlibrary.org/b/id/111-L.jpg"),
+            "falls back to the edition's cover when the work has none"
+        );
+        assert_eq!(book.source, "open_library");
+        assert_eq!(book.source_id, "OL1W");
+    }
+
+    #[tokio::test]
+    async fn resolve_returns_not_found_for_a_missing_work() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL404W.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let err = resolve_at(&http, &server.uri(), "OL404W")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ProviderError::NotFound { provider: "open_library", source_id } if source_id == "OL404W"
+        ));
+    }
 }

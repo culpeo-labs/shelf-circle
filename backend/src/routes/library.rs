@@ -127,3 +127,28 @@ async fn user_library(
 
     Ok(Json(entries))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_every_documented_shelf_name() {
+        for shelf in ["reading", "read", "want_to_read", "did_not_finish", "all"] {
+            assert!(
+                shelf_filter(shelf).is_some(),
+                "{shelf:?} should be a recognized shelf"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_shelf_names() {
+        assert!(
+            shelf_filter("finished").is_none(),
+            "not the actual enum spelling"
+        );
+        assert!(shelf_filter("").is_none());
+        assert!(shelf_filter("Reading").is_none(), "case-sensitive");
+    }
+}

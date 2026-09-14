@@ -1,21 +1,12 @@
-mod auth;
-mod db;
-mod error;
-mod models;
-mod providers;
-mod routes;
-mod state;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::routing::get;
-use axum::Router;
 use tokio::net::TcpListener;
 
-use crate::auth::HankoAuth;
-use crate::providers::BookProviders;
-use crate::state::AppState;
+use shelf_circle_backend::auth::HankoAuth;
+use shelf_circle_backend::providers::BookProviders;
+use shelf_circle_backend::state::AppState;
+use shelf_circle_backend::{app, db};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,10 +37,7 @@ async fn main() -> anyhow::Result<()> {
         auth,
     };
 
-    let app: Router = Router::new()
-        .route("/health", get(|| async { "ok" }))
-        .merge(routes::router())
-        .with_state(state);
+    let app = app(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     tracing::info!("shelf-circle backend listening on {addr}");

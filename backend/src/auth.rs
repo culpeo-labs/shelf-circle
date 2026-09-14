@@ -97,6 +97,38 @@ pub struct HankoAuth {
 }
 
 impl HankoAuth {
+    /// Build a verifier directly from already-resolved settings, bypassing the
+    /// environment. `jwks_url` must be `Some` unless `disabled` is true.
+    /// Split out of [`Self::from_env`] so it (and therefore [`Self::verify`])
+    /// can be exercised in tests against a mock JWKS endpoint.
+    pub fn new(
+        jwks_url: Option<String>,
+        audience: Option<String>,
+        disabled: bool,
+    ) -> anyhow::Result<Self> {
+        if jwks_url.is_none() && !disabled {
+            anyhow::bail!(
+                "no Hanko configuration: set HANKO_API_URL (or HANKO_JWKS_URL), \
+                 or AUTH_DISABLED=true for local development"
+            );
+        }
+
+        let client = reqwest::Client::builder()
+            .user_agent("shelf-circle-backend/0.1")
+            .build()?;
+
+        Ok(Self {
+            client,
+            jwks_url,
+            audience,
+            disabled,
+            cache: RwLock::new(JwksCache {
+                keys: HashMap::new(),
+                fetched_at: None,
+            }),
+        })
+    }
+
     pub fn from_env() -> anyhow::Result<Self> {
         let disabled = env_flag("AUTH_DISABLED");
 
@@ -131,20 +163,7 @@ impl HankoAuth {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        let client = reqwest::Client::builder()
-            .user_agent("shelf-circle-backend/0.1")
-            .build()?;
-
-        Ok(Self {
-            client,
-            jwks_url,
-            audience,
-            disabled,
-            cache: RwLock::new(JwksCache {
-                keys: HashMap::new(),
-                fetched_at: None,
-            }),
-        })
+        Self::new(jwks_url, audience, disabled)
     }
 
     /// Best-effort JWKS prefetch at startup. Failure is logged, not fatal — the
@@ -344,5 +363,236 @@ pub fn ensure_self(current: &User, path_id: Uuid) -> ApiResult<()> {
         Err(ApiError::Forbidden(
             "you can only access your own resources".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use serde_json::{json, Value};
+    use uuid::Uuid;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    // Throwaway RSA-2048 keypair generated only for these tests (see
+    // tests/support/README.md, which carries the same key for the
+    // integration tests). Its public half is hard-coded as N/E below.
+    const PRIVATE_KEY_PEM: &str = include_str!("../tests/support/rsa_test_key.pem");
+    const KID: &str = "test-key-1";
+    const N: &str = "2cSkXaigrKoyCI9iESnXb8mhFXIt4echAPq56nlZtL0Hf92lFs7zBnfxi4QiREJGGM77x1bRHYfYC4GWhN6SXhTDpe-RE6m_ad3gdKObBpjoWSzPEO8BclY3188yyMxrHqGfXuMRfiiaKWiXk-7H5S5sILjUt8SjVhF4mHS6Zh3yB93Tv_LV0y0C9x6ZRnrV7rvn4qrDGeKQGBSDh75Bo5Rn8ZOj85slk81AfkWDaYPddPm7CTD4A29f9hyDjQAAvcSe6W23gRP_hexqPb5H4dHyM_JPgKnWTpMV1yA6mQZkqtyoOesxlEQwD5OIze-vXsaruD2NResDFfQYEEAWQw";
+    const E: &str = "AQAB";
+
+    fn jwks_json() -> Value {
+        json!({
+            "keys": [{
+                "kty": "RSA",
+                "use": "sig",
+                "kid": KID,
+                "alg": "RS256",
+                "n": N,
+                "e": E,
+            }]
+        })
+    }
+
+    async fn mock_jwks_server() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(jwks_json()))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn sign(kid: &str, claims: Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_string());
+        let key =
+            EncodingKey::from_rsa_pem(PRIVATE_KEY_PEM.as_bytes()).expect("parse test RSA key");
+        encode(&header, &claims, &key).expect("sign token")
+    }
+
+    fn claims_with_exp() -> Value {
+        json!({ "sub": "hanko|abc", "exp": Utc::now().timestamp() + 3600 })
+    }
+
+    // ---------- HankoClaims / email deserialization ----------
+    // Hanko has shipped `email` as both a bare string and `{ address }`; the
+    // untagged `EmailClaim` enum is exactly the kind of thing a serde bump
+    // could silently change the behavior of.
+
+    #[test]
+    fn email_claim_accepts_plain_string() {
+        let claims: HankoClaims =
+            serde_json::from_value(json!({ "sub": "u1", "email": "a@example.com" })).unwrap();
+        assert_eq!(claims.email(), Some("a@example.com"));
+    }
+
+    #[test]
+    fn email_claim_accepts_object_shape() {
+        let claims: HankoClaims = serde_json::from_value(json!({
+            "sub": "u1",
+            "email": { "address": "a@example.com", "is_verified": true }
+        }))
+        .unwrap();
+        assert_eq!(claims.email(), Some("a@example.com"));
+    }
+
+    #[test]
+    fn email_claim_defaults_to_none_when_absent() {
+        let claims: HankoClaims = serde_json::from_value(json!({ "sub": "u1" })).unwrap();
+        assert_eq!(claims.email(), None);
+    }
+
+    // ---------- ensure_self ----------
+
+    fn user_with_id(id: Uuid) -> User {
+        User {
+            id,
+            handle: "h".into(),
+            display_name: "H".into(),
+            avatar_url: None,
+            locale: "en".into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn ensure_self_allows_matching_id() {
+        let id = Uuid::new_v4();
+        assert!(ensure_self(&user_with_id(id), id).is_ok());
+    }
+
+    #[test]
+    fn ensure_self_rejects_mismatched_id() {
+        let user = user_with_id(Uuid::new_v4());
+        let err = ensure_self(&user, Uuid::new_v4()).unwrap_err();
+        assert!(matches!(err, ApiError::Forbidden(_)));
+    }
+
+    // ---------- env_flag ----------
+
+    #[test]
+    fn env_flag_parses_truthy_and_falsy_values() {
+        for truthy in ["1", "true", "TRUE", "yes", " yes "] {
+            std::env::set_var("SC_TEST_FLAG", truthy);
+            assert!(env_flag("SC_TEST_FLAG"), "expected {truthy:?} to be truthy");
+        }
+        for falsy in ["0", "false", "no", "", "on"] {
+            std::env::set_var("SC_TEST_FLAG", falsy);
+            assert!(!env_flag("SC_TEST_FLAG"), "expected {falsy:?} to be falsy");
+        }
+        std::env::remove_var("SC_TEST_FLAG");
+        assert!(!env_flag("SC_TEST_FLAG"), "unset var is falsy");
+    }
+
+    // ---------- HankoAuth::verify (against a mock JWKS endpoint) ----------
+
+    #[tokio::test]
+    async fn verify_accepts_a_correctly_signed_known_key_token() {
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        let token = sign(KID, claims_with_exp());
+        let claims = auth.verify(&token).await.expect("token should verify");
+        assert_eq!(claims.sub, "hanko|abc");
+    }
+
+    #[tokio::test]
+    async fn verify_fetches_jwks_lazily_on_first_use() {
+        // No `warm()` call — the first `verify` should trigger the fetch itself.
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        let token = sign(KID, claims_with_exp());
+        assert!(auth.verify(&token).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn verify_rejects_unknown_kid() {
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        let token = sign("some-other-kid", claims_with_exp());
+        let err = auth.verify(&token).await.unwrap_err();
+        assert!(matches!(err, AuthError::UnknownKey));
+    }
+
+    #[tokio::test]
+    async fn verify_rejects_expired_token() {
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        // `jsonwebtoken`'s default `Validation` allows a 60s leeway, so this
+        // needs to be well past expired, not just in the past.
+        let token = sign(
+            KID,
+            json!({ "sub": "hanko|abc", "exp": Utc::now().timestamp() - 300 }),
+        );
+        let err = auth.verify(&token).await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[tokio::test]
+    async fn verify_rejects_token_missing_exp_claim() {
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        let token = sign(KID, json!({ "sub": "hanko|abc" }));
+        let err = auth.verify(&token).await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[tokio::test]
+    async fn verify_enforces_configured_audience() {
+        let server = mock_jwks_server().await;
+        let auth = HankoAuth::new(
+            Some(format!("{}/jwks.json", server.uri())),
+            Some("shelf-circle-app".to_string()),
+            false,
+        )
+        .expect("build HankoAuth");
+
+        let mut claims = claims_with_exp();
+        claims["aud"] = json!("some-other-app");
+        let token = sign(KID, claims);
+        let err = auth.verify(&token).await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[tokio::test]
+    async fn verify_fails_closed_when_jwks_endpoint_is_unreachable() {
+        // A JWKS URL that answers 500 simulates Hanko being down: verification
+        // must fail, not silently accept the token.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks.json"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let auth = HankoAuth::new(Some(format!("{}/jwks.json", server.uri())), None, false)
+            .expect("build HankoAuth");
+
+        let token = sign(KID, claims_with_exp());
+        let err = auth.verify(&token).await.unwrap_err();
+        assert!(matches!(err, AuthError::JwksUnavailable));
+    }
+
+    #[test]
+    fn new_requires_jwks_url_unless_disabled() {
+        assert!(HankoAuth::new(None, None, false).is_err());
+        assert!(HankoAuth::new(None, None, true).is_ok());
+        assert!(
+            HankoAuth::new(Some("http://example.invalid/jwks.json".into()), None, true).is_ok()
+        );
     }
 }
