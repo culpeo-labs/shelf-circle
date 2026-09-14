@@ -147,3 +147,27 @@ async fn user_feed(
 
     Ok(Json(items))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_reading_status_has_distinct_feed_phrasing() {
+        let statuses = [
+            ReadingStatus::WantToRead,
+            ReadingStatus::CurrentlyReading,
+            ReadingStatus::Finished,
+            ReadingStatus::DidNotFinish,
+        ];
+        let verbs: Vec<&str> = statuses.iter().copied().map(verb_for).collect();
+
+        assert_eq!(verbs[0], "wants to read");
+        assert_eq!(verbs[1], "started reading");
+        assert_eq!(verbs[2], "finished");
+        assert_eq!(verbs[3], "did not finish");
+
+        let unique: std::collections::HashSet<_> = verbs.iter().collect();
+        assert_eq!(unique.len(), verbs.len(), "no two statuses share phrasing");
+    }
+}
