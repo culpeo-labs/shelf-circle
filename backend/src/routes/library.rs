@@ -104,7 +104,11 @@ async fn user_library(
         "#
     );
 
-    let rows = sqlx::query_as::<_, LibraryRow>(&sql)
+    // `sql` is dynamic (the `where` clause varies by shelf), but every piece
+    // that goes into it comes from `shelf_filter`'s fixed, static match arms
+    // above — never straight from `params.shelf` — so this is safe despite
+    // not being a `&'static str` itself. See `sqlx::AssertSqlSafe`'s docs.
+    let rows = sqlx::query_as::<_, LibraryRow>(sqlx::AssertSqlSafe(sql))
         .bind(user_id)
         .fetch_all(&pool)
         .await?;

@@ -116,10 +116,14 @@ impl TestDb {
             );
 
         let db_name = format!("t_{}", Uuid::new_v4().simple());
-        sqlx::query(&format!(r#"create database "{db_name}""#))
-            .execute(&admin_pool)
-            .await
-            .expect("create ephemeral test database");
+        // `db_name` is our own `t_<uuid hex>`, never external input, so this
+        // dynamic DDL is safe despite not being a `&'static str`.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            r#"create database "{db_name}""#
+        )))
+        .execute(&admin_pool)
+        .await
+        .expect("create ephemeral test database");
 
         let db_url = with_database(&admin_url, &db_name);
         let pool = shelf_circle_backend::db::connect(&db_url)
@@ -150,9 +154,11 @@ impl Drop for TestDb {
                 .bind(&db_name)
                 .execute(&admin_pool)
                 .await;
-                let _ = sqlx::query(&format!(r#"drop database if exists "{db_name}""#))
-                    .execute(&admin_pool)
-                    .await;
+                let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    r#"drop database if exists "{db_name}""#
+                )))
+                .execute(&admin_pool)
+                .await;
             });
         }
     }
