@@ -80,6 +80,19 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: acrName
 }
 
+// User-assigned (not system-assigned) so AcrPull can be granted *before* the
+// Container App exists: a system-assigned identity's principalId only exists
+// once the app resource is created, which makes the role assignment depend on
+// the app — but the app's first image pull depends on the role assignment
+// already being in place. That circular wait causes the initial revision to
+// retry pulling until Container Apps gives up ("Operation expired"), failing
+// the whole deployment before the role assignment is ever attempted. A
+// pre-existing identity breaks the cycle.
+resource apiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${apiName}-identity'
+  location: location
+}
+
 resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: lawName
   location: location
@@ -158,7 +171,10 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
   name: apiName
   location: location
   identity: {
-    type: 'SystemAssigned'
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${apiIdentity.id}': {}
+    }
   }
   properties: {
     managedEnvironmentId: env.id
@@ -179,7 +195,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
       registries: [
         {
           server: acr.properties.loginServer
-          identity: 'system'
+          identity: apiIdentity.id
         }
       ]
       secrets: concat(
@@ -275,17 +291,20 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
       }
     }
   }
+  dependsOn: [
+    acrPull
+  ]
 }
 
-// Let the Container App's managed identity pull from ACR. First deploy: the
-// initial image pull may retry until this assignment propagates, then the
-// revision goes healthy on its own.
+// Grant AcrPull to the identity before the Container App is created (see
+// apiIdentity above) so the app's first image pull succeeds immediately
+// instead of racing role propagation.
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, api.id, acrPullRoleId)
+  name: guid(acr.id, apiIdentity.id, acrPullRoleId)
   scope: acr
   properties: {
     roleDefinitionId: acrPullRoleId
-    principalId: api.identity.principalId
+    principalId: apiIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
