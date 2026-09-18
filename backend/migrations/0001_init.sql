@@ -1,10 +1,8 @@
 -- Leecommend initial schema
 -- Matches the data model in /areas/reading-app architecture doc.
 
-create extension if not exists "uuid-ossp";
-
 create table users (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     handle text not null unique,
     display_name text not null,
     avatar_url text,
@@ -15,7 +13,7 @@ create table users (
 -- Mutual friendship: a single row per pair, canonicalized so user_a_id < user_b_id.
 -- Keeps the "friends only" model simple (no one-way follows for v1).
 create table friendships (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     user_a_id uuid not null references users(id) on delete cascade,
     user_b_id uuid not null references users(id) on delete cascade,
     created_at timestamptz not null default now(),
@@ -25,7 +23,7 @@ create table friendships (
 
 -- Canonical "work" — one row per logical book, independent of edition/language/translation.
 create table books (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     canonical_title text not null,
     primary_author text,
     -- external source ids for the resolution layer, so we don't re-resolve on every lookup
@@ -39,7 +37,7 @@ create index books_google_books_idx on books(google_books_volume_id);
 
 -- A specific edition/translation of a book (language matters for multi-language support).
 create table book_editions (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     book_id uuid not null references books(id) on delete cascade,
     language text not null, -- BCP-47 tag, e.g. 'en', 'es', 'pt-BR'
     isbn_13 text,
@@ -58,7 +56,7 @@ create index book_editions_isbn13_idx on book_editions(isbn_13);
 create type reading_status as enum ('want_to_read', 'currently_reading', 'finished', 'did_not_finish');
 
 create table book_statuses (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     user_id uuid not null references users(id) on delete cascade,
     book_id uuid not null references books(id) on delete cascade,
     status reading_status not null,
@@ -70,7 +68,7 @@ create table book_statuses (
 create index book_statuses_user_idx on book_statuses(user_id);
 
 create table recommendations (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     from_user_id uuid not null references users(id) on delete cascade,
     to_user_id uuid not null references users(id) on delete cascade,
     book_id uuid not null references books(id) on delete cascade,
@@ -83,7 +81,7 @@ create index recommendations_from_user_idx on recommendations(from_user_id);
 -- Lightweight reactions on a recommendation or status update — intentionally minimal,
 -- this is not a review platform.
 create table reactions (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     user_id uuid not null references users(id) on delete cascade,
     recommendation_id uuid references recommendations(id) on delete cascade,
     book_status_id uuid references book_statuses(id) on delete cascade,

@@ -6,7 +6,7 @@
 -- "Alice started reading Dune" stays in the feed even after she finishes it.
 
 create table activity_events (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid primary key default gen_random_uuid(),
     actor_user_id uuid not null references users(id) on delete cascade,
     book_id uuid not null references books(id) on delete cascade,
     -- the status the actor moved the book to
