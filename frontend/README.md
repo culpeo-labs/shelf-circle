@@ -34,6 +34,21 @@ link that switches to Hanko's registration flow. After verifying, a one-time
 "Set up your profile" screen creates the Shelf Circle profile
 (`POST /users`) tied to that Hanko identity.
 
+## Brand assets
+
+`../assets/logo.svg` (repo root) is the source of truth for the logo — it's
+shared across whatever else in the repo eventually needs it, not just this
+app. This app's icons (`assets/icon.png`, `splash-icon.png`, `favicon.png`,
+the `android-icon-*.png` adaptive-icon layers) are generated from it; don't
+hand-edit them. After changing the SVG, regenerate with:
+
+```
+npm run generate:icons
+```
+
+See `scripts/generate-app-icons.mjs` for the sizes/modes it produces and its
+`--source` / `--out` / `--background` overrides.
+
 ## Known gaps
 
 - **No session refresh.** Hanko JWTs are short-lived; an expired token sends
