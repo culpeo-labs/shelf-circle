@@ -58,9 +58,23 @@ const TARGETS = [
   { file: 'android-icon-background.png', size: 512, mode: 'solid' },
 ];
 
-/** Rasterizes the SVG into a transparent `size`x`size` square, logo centered and contained. */
-async function renderLogo(svgBuffer, size) {
+/**
+ * Rasterizes the SVG at high resolution and trims its own transparent
+ * margin — the source `viewBox` has empty padding baked in around the
+ * artwork, which would otherwise show up as extra margin no matter what
+ * `padding` each target below asks for.
+ */
+async function loadTrimmedLogo(svgBuffer) {
   return sharp(svgBuffer)
+    .resize(2048, 2048, { fit: 'inside', background: TRANSPARENT })
+    .png()
+    .trim()
+    .toBuffer();
+}
+
+/** Fits the (already-trimmed) logo into a transparent `size`x`size` square, centered. */
+async function renderLogo(trimmedLogoBuffer, size) {
+  return sharp(trimmedLogoBuffer)
     .resize(size, size, { fit: 'contain', background: TRANSPARENT })
     .png()
     .toBuffer();
@@ -81,6 +95,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const backgroundRgba = hexToRgba(args.background);
   const svgBuffer = await readFile(args.source);
+  const trimmedLogo = await loadTrimmedLogo(svgBuffer);
   await mkdir(args.outDir, { recursive: true });
 
   for (const target of TARGETS) {
@@ -95,7 +110,7 @@ async function main() {
     }
 
     const contentSize = Math.round(target.size * (1 - target.padding * 2));
-    let logo = await renderLogo(svgBuffer, contentSize);
+    let logo = await renderLogo(trimmedLogo, contentSize);
     if (target.mode === 'monochrome') logo = await toMonochrome(logo);
 
     const canvasBackground = target.mode === 'pad' ? backgroundRgba : TRANSPARENT;
