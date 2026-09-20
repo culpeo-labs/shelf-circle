@@ -50,7 +50,10 @@ export function CreateIdentityScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Welcome</Text>
         <Text style={styles.subtitle}>Set up your profile to get started.</Text>
@@ -83,8 +86,16 @@ export function CreateIdentityScreen() {
           {handleError && <Text style={styles.fieldError}>{handleError}</Text>}
         </View>
 
-        <Pressable style={[styles.button, !canSubmit && styles.buttonDisabled]} onPress={submit} disabled={!canSubmit}>
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Continue</Text>}
+        <Pressable
+          style={[styles.button, !canSubmit && styles.buttonDisabled]}
+          onPress={submit}
+          disabled={!canSubmit}
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Continue</Text>
+          )}
         </Pressable>
 
         <Pressable onPress={() => void signOut()} disabled={busy}>

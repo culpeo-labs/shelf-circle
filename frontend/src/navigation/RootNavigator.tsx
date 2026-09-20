@@ -29,13 +29,21 @@ export function RootNavigator() {
       )}
 
       {status === 'onboarding' && (
-        <Stack.Screen name="CreateIdentity" component={CreateIdentityScreen} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="CreateIdentity"
+          component={CreateIdentityScreen}
+          options={{ headerShown: false }}
+        />
       )}
 
       {status === 'signed-in' && (
         <>
           <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
-          <Stack.Screen name="BookDetail" component={BookDetailScreen} options={{ title: 'Book' }} />
+          <Stack.Screen
+            name="BookDetail"
+            component={BookDetailScreen}
+            options={{ title: 'Book' }}
+          />
           <Stack.Screen
             name="BookSearch"
             component={BookSearchScreen}
@@ -61,7 +69,11 @@ export function RootNavigator() {
             component={AddFriendScreen}
             options={{ title: 'Add a friend', presentation: 'modal' }}
           />
-          <Stack.Screen name="FriendProfile" component={FriendProfileScreen} options={{ title: 'Friend' }} />
+          <Stack.Screen
+            name="FriendProfile"
+            component={FriendProfileScreen}
+            options={{ title: 'Friend' }}
+          />
         </>
       )}
     </Stack.Navigator>

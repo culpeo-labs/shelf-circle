@@ -33,7 +33,13 @@ function parseArgs(argv) {
 
 function hexToRgba(hex) {
   const clean = hex.replace('#', '');
-  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+  const full =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean;
   const int = parseInt(full.slice(0, 6), 16);
   return {
     r: (int >> 16) & 255,
@@ -82,13 +88,18 @@ async function renderLogo(trimmedLogoBuffer, size) {
 
 /** Android's themed-icon layer: a solid-white silhouette, alpha preserved. */
 async function toMonochrome(pngBuffer) {
-  const { data, info } = await sharp(pngBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp(pngBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   for (let i = 0; i < data.length; i += 4) {
     data[i] = 255;
     data[i + 1] = 255;
     data[i + 2] = 255;
   }
-  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .png()
+    .toBuffer();
 }
 
 async function main() {
@@ -102,7 +113,14 @@ async function main() {
     const outPath = path.join(args.outDir, target.file);
 
     if (target.mode === 'solid') {
-      await sharp({ create: { width: target.size, height: target.size, channels: 4, background: backgroundRgba } })
+      await sharp({
+        create: {
+          width: target.size,
+          height: target.size,
+          channels: 4,
+          background: backgroundRgba,
+        },
+      })
         .png()
         .toFile(outPath);
       console.log(`wrote ${target.file} (${target.size}x${target.size}, solid ${args.background})`);
@@ -114,7 +132,14 @@ async function main() {
     if (target.mode === 'monochrome') logo = await toMonochrome(logo);
 
     const canvasBackground = target.mode === 'pad' ? backgroundRgba : TRANSPARENT;
-    await sharp({ create: { width: target.size, height: target.size, channels: 4, background: canvasBackground } })
+    await sharp({
+      create: {
+        width: target.size,
+        height: target.size,
+        channels: 4,
+        background: canvasBackground,
+      },
+    })
       .composite([{ input: logo, gravity: 'center' }])
       .png()
       .toFile(outPath);

@@ -19,8 +19,8 @@ export function FriendProfileScreen({ route }: Props) {
       {data?.handle && <Text style={styles.handle}>@{data.handle}</Text>}
 
       <Text style={styles.note}>
-        Their shelves aren't visible here yet — the backend only exposes a user's reading
-        library to themselves right now.
+        Their shelves aren't visible here yet — the backend only exposes a user's reading library to
+        themselves right now.
       </Text>
     </View>
   );

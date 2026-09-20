@@ -31,7 +31,12 @@ export function FriendsScreen() {
           renderItem={({ item }) => (
             <Pressable
               style={styles.row}
-              onPress={() => navigation.navigate('FriendProfile', { userId: item.id, displayName: item.display_name })}
+              onPress={() =>
+                navigation.navigate('FriendProfile', {
+                  userId: item.id,
+                  displayName: item.display_name,
+                })
+              }
             >
               <Avatar url={item.avatar_url} name={item.display_name} />
               <View>

@@ -1,7 +1,18 @@
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import type { FriendSummary } from '../../friends/FriendsContext';
 import { useFriends } from '../../friends/FriendsContext';
@@ -25,7 +36,11 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
     if (!selected || sent) return;
     setSent(true);
     try {
-      await createRecommendation.mutateAsync({ to_user_id: selected.id, book_id: bookId, note: note.trim() || undefined });
+      await createRecommendation.mutateAsync({
+        to_user_id: selected.id,
+        book_id: bookId,
+        note: note.trim() || undefined,
+      });
       navigation.goBack();
     } catch {
       setSent(false);
@@ -71,7 +86,11 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
           onPress={submit}
           disabled={!selected || sent}
         >
-          {sent ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Send recommendation</Text>}
+          {sent ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Send recommendation</Text>
+          )}
         </Pressable>
       </View>
     </View>
@@ -101,7 +120,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     minHeight: 44,
   },
-  button: { backgroundColor: '#3b6e5e', borderRadius: 8, paddingVertical: 14, alignItems: 'center' },
+  button: {
+    backgroundColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
 });

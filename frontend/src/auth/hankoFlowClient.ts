@@ -71,7 +71,9 @@ async function post(url: string, body: unknown): Promise<FlowResult> {
 }
 
 function resolveHref(href: string): string {
-  return href.startsWith('http') ? href : `${HANKO_API_URL}${href.startsWith('/') ? '' : '/'}${href}`;
+  return href.startsWith('http')
+    ? href
+    : `${HANKO_API_URL}${href.startsWith('/') ? '' : '/'}${href}`;
 }
 
 /** Starts a flow, e.g. `start('/login')`. An empty body is fine — Hanko ignores it. */
@@ -83,11 +85,13 @@ export function startFlow(path: string): Promise<FlowResult> {
 export function submitFlowAction(
   state: FlowState,
   actionName: string,
-  inputData: Record<string, string>
+  inputData: Record<string, string>,
 ): Promise<FlowResult> {
   const action = state.actions[actionName];
   if (!action) {
-    throw new Error(`"${state.name}" has no action "${actionName}" (it may have expired — try again).`);
+    throw new Error(
+      `"${state.name}" has no action "${actionName}" (it may have expired — try again).`,
+    );
   }
   return post(resolveHref(action.href), { input_data: inputData, csrf_token: state.csrf_token });
 }

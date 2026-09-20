@@ -21,7 +21,7 @@ export function RecommendationsScreen() {
   useFocusEffect(
     useCallback(() => {
       void markSeen();
-    }, [markSeen])
+    }, [markSeen]),
   );
 
   if (isLoading) return <LoadingScreen />;
@@ -43,7 +43,10 @@ export function RecommendationsScreen() {
       keyExtractor={(item) => item.id}
       contentContainerStyle={styles.list}
       renderItem={({ item }) => (
-        <RecommendationRow item={item} onPress={() => navigation.navigate('BookDetail', { bookId: item.book_id })} />
+        <RecommendationRow
+          item={item}
+          onPress={() => navigation.navigate('BookDetail', { bookId: item.book_id })}
+        />
       )}
     />
   );
@@ -55,8 +58,15 @@ function RecommendationRow({ item, onPress }: { item: Recommendation; onPress: (
 
   return (
     <Pressable style={styles.row} onPress={onPress}>
-      <Avatar url={sender.data?.avatar_url ?? null} name={sender.data?.display_name ?? '?'} size={36} />
-      <BookCover url={book.data?.cover_image_url ?? null} title={book.data?.canonical_title ?? ''} />
+      <Avatar
+        url={sender.data?.avatar_url ?? null}
+        name={sender.data?.display_name ?? '?'}
+        size={36}
+      />
+      <BookCover
+        url={book.data?.cover_image_url ?? null}
+        title={book.data?.canonical_title ?? ''}
+      />
       <View style={styles.rowText}>
         <Text style={styles.sender}>{sender.data?.display_name ?? 'Someone'}</Text>
         <Text style={styles.title} numberOfLines={2}>

@@ -33,14 +33,19 @@ export function MyBooksScreen() {
             style={[styles.segment, tab === t.key && styles.segmentActive]}
             onPress={() => setTab(t.key)}
           >
-            <Text style={[styles.segmentText, tab === t.key && styles.segmentTextActive]}>{t.label}</Text>
+            <Text style={[styles.segmentText, tab === t.key && styles.segmentTextActive]}>
+              {t.label}
+            </Text>
           </Pressable>
         ))}
       </View>
 
       <View style={styles.header}>
         {tab === 'read' && (
-          <HeaderButton label="+ Add a book I've read" onPress={() => navigation.navigate('AddPastRead')} />
+          <HeaderButton
+            label="+ Add a book I've read"
+            onPress={() => navigation.navigate('AddPastRead')}
+          />
         )}
         {(tab === 'want_to_read' || tab === 'reading') && (
           <HeaderButton label="+ Find a book" onPress={() => navigation.navigate('BookSearch')} />
@@ -70,7 +75,10 @@ export function MyBooksScreen() {
                 setStatus.mutate({ book_id: item.book.id, status: 'currently_reading' })
               }
               onMarkFinished={() =>
-                navigation.navigate('FinishBook', { bookId: item.book.id, initialStatus: 'finished' })
+                navigation.navigate('FinishBook', {
+                  bookId: item.book.id,
+                  initialStatus: 'finished',
+                })
               }
             />
           )}
@@ -145,7 +153,13 @@ function LibraryRow({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  segmented: { flexDirection: 'row', margin: 16, backgroundColor: '#efeae0', borderRadius: 8, padding: 3 },
+  segmented: {
+    flexDirection: 'row',
+    margin: 16,
+    backgroundColor: '#efeae0',
+    borderRadius: 8,
+    padding: 3,
+  },
   segment: { flex: 1, paddingVertical: 8, borderRadius: 6, alignItems: 'center' },
   segmentActive: { backgroundColor: '#fff' },
   segmentText: { fontSize: 13, color: '#6b6456', fontWeight: '500' },
@@ -158,7 +172,13 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 4 },
   title: { fontSize: 15, fontWeight: '600', color: '#2b2a26' },
   author: { fontSize: 13, color: '#6b6456' },
-  progressTrack: { height: 5, borderRadius: 3, backgroundColor: '#efeae0', overflow: 'hidden', marginTop: 2 },
+  progressTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#efeae0',
+    overflow: 'hidden',
+    marginTop: 2,
+  },
   progressFill: { height: '100%', backgroundColor: '#3b6e5e' },
   readMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dnfBadge: {
@@ -171,6 +191,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical: 1,
   },
-  rowAction: { paddingVertical: 6, paddingHorizontal: 10, borderWidth: 1, borderColor: '#3b6e5e', borderRadius: 6 },
+  rowAction: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#3b6e5e',
+    borderRadius: 6,
+  },
   rowActionText: { color: '#3b6e5e', fontWeight: '600', fontSize: 12 },
 });

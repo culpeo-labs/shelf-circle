@@ -1,4 +1,7 @@
-import type { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
+import type {
+  NativeStackNavigationProp,
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import React, { useMemo, useState } from 'react';
@@ -30,7 +33,7 @@ export function BookDetailScreen({ route }: Props) {
 
   const myStatus = useMemo(
     () => statuses.data?.find((s) => s.book_id === bookId) ?? null,
-    [statuses.data, bookId]
+    [statuses.data, bookId],
   );
   const [localProgress, setLocalProgress] = useState<number | null>(null);
   const progress = localProgress ?? myStatus?.progress_percent ?? 0;
@@ -51,10 +54,17 @@ export function BookDetailScreen({ route }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.header}>
-        <BookCover url={book.data.cover_image_url} title={book.data.canonical_title} width={100} height={150} />
+        <BookCover
+          url={book.data.cover_image_url}
+          title={book.data.canonical_title}
+          width={100}
+          height={150}
+        />
         <View style={styles.headerText}>
           <Text style={styles.title}>{book.data.canonical_title}</Text>
-          {book.data.primary_author && <Text style={styles.author}>{book.data.primary_author}</Text>}
+          {book.data.primary_author && (
+            <Text style={styles.author}>{book.data.primary_author}</Text>
+          )}
         </View>
       </View>
 
@@ -67,7 +77,9 @@ export function BookDetailScreen({ route }: Props) {
               style={[styles.shelfOption, myStatus?.status === s.key && styles.shelfOptionActive]}
               onPress={() => selectShelf(s.key)}
             >
-              <Text style={[styles.shelfText, myStatus?.status === s.key && styles.shelfTextActive]}>
+              <Text
+                style={[styles.shelfText, myStatus?.status === s.key && styles.shelfTextActive]}
+              >
                 {s.label}
               </Text>
             </Pressable>
@@ -84,7 +96,11 @@ export function BookDetailScreen({ route }: Props) {
               value={progress}
               onValueChange={setLocalProgress}
               onSlidingComplete={(value) =>
-                setStatus.mutate({ book_id: bookId, status: 'currently_reading', progress_percent: value })
+                setStatus.mutate({
+                  book_id: bookId,
+                  status: 'currently_reading',
+                  progress_percent: value,
+                })
               }
               minimumTrackTintColor="#3b6e5e"
               maximumTrackTintColor="#e5e1d8"

@@ -12,7 +12,10 @@ export type RootStackParamList = {
   BookDetail: { bookId: string };
   BookSearch: undefined;
   AddPastRead: undefined;
-  FinishBook: { bookId: string; initialStatus?: Extract<ReadingStatus, 'finished' | 'did_not_finish'> };
+  FinishBook: {
+    bookId: string;
+    initialStatus?: Extract<ReadingStatus, 'finished' | 'did_not_finish'>;
+  };
   RecommendToFriend: { bookId: string };
   AddFriend: undefined;
   FriendProfile: { userId: string; displayName: string };

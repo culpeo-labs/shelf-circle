@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "react-perf"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    // This rule's intent is catching "derive state during render instead"
+    // (its own docs example is a bare, unconditional `setState` with no I/O).
+    // Its actual implementation traces into any async function an effect
+    // calls, so it also fires on legitimate async-I/O effects (session
+    // restore from storage, starting an auth flow, a debounced lookup) —
+    // exactly the case React's own docs call the correct use of useEffect.
+    "react/set-state-in-effect": "off"
+  },
+  "env": {
+    "builtin": true
+  }
+}

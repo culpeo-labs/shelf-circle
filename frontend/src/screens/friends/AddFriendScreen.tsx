@@ -74,7 +74,9 @@ export function AddFriendScreen() {
       {previewError && <Text style={styles.error}>{previewError}</Text>}
       {createFriendship.isError && (
         <Text style={styles.error}>
-          {createFriendship.error instanceof ApiError ? createFriendship.error.message : 'Could not add friend.'}
+          {createFriendship.error instanceof ApiError
+            ? createFriendship.error.message
+            : 'Could not add friend.'}
         </Text>
       )}
 
@@ -109,7 +111,13 @@ const styles = StyleSheet.create({
   preview: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   previewName: { fontSize: 15, fontWeight: '600', color: '#2b2a26' },
   error: { color: '#b3432b' },
-  button: { backgroundColor: '#3b6e5e', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
+  button: {
+    backgroundColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
 });
