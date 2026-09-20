@@ -49,6 +49,31 @@ npm run generate:icons
 See `scripts/generate-app-icons.mjs` for the sizes/modes it produces and its
 `--source` / `--out` / `--background` overrides.
 
+## Builds (EAS)
+
+Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/projects/shelf-circle).
+`eas.json` has three profiles:
+
+- **development** / **preview** — installable Android APK + iOS *simulator*
+  build (no Apple Developer account needed). `preview` is what CI builds on
+  every push to `main` (`.github/workflows/frontend-build.yml`, via
+  `eas build --profile preview --platform all --no-wait` — fire-and-forget;
+  check the EAS dashboard for build status, it isn't wired back into the
+  GitHub Actions run).
+- **production** — real Play Store AAB, and (once there's an Apple
+  Developer account to sign with) an App Store IPA. Not automated yet —
+  run `eas build --profile production` by hand when it's time.
+
+`EXPO_PUBLIC_API_BASE_URL` / `EXPO_PUBLIC_HANKO_API_URL` are set as EAS
+environment variables (`eas env:list`), not read from `.env` — EAS Build
+runs in a clean cloud checkout that never sees the (gitignored) local
+`.env` file. Update them with `eas env:set` if the backend or Hanko
+project ever changes, not by editing `.env` and hoping.
+
+CI auth is an `EXPO_TOKEN` repo secret (an EAS access token, from
+https://expo.dev/settings/access-tokens) — set once, unrelated to any
+individual's `eas login`.
+
 ## Known gaps
 
 - **No session refresh.** Hanko JWTs are short-lived; an expired token sends
