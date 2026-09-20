@@ -1,4 +1,4 @@
-# Leecommend — High-Level Architecture
+# Shelf Circle — High-Level Architecture
 
 ## Core idea
 A small, friends-first social layer around reading: what you're reading, what you've finished, and direct recommendations to specific friends — not a public review feed. This is a non-commercial, contribute-to-the-world project, not a business. The primary path from a book page is **"find at your local library"**; a small affiliate link (Bookshop.org, Libro.fm) is a secondary, optional option that exists only to help cover hosting costs, not to generate income.

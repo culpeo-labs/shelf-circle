@@ -41,14 +41,14 @@ Creates a new token for the requesting user, invalidating no previous ones
 (a user can have multiple outstanding invites — e.g. one they generate fresh
 per friend they're adding).
 Returns: `{ token, expires_at, invite_url }` where `invite_url` is a
-deep-link-able URL, e.g. `https://leecommend.app/invite/{token}` (falls back
+deep-link-able URL, e.g. `https://shelfcircle.app/invite/{token}` (falls back
 to an app-store landing page if the recipient doesn't have the app yet;
 if they do, the app should intercept this URL via universal links / app
 links and route straight to the accept flow).
 
 ### `GET /invites/:token`
 Public (no auth) — lets the client show "so-and-so wants to be your friend on
-Leecommend" before the recipient has even logged in/signed up, by returning
+Shelf Circle" before the recipient has even logged in/signed up, by returning
 the inviting user's public display name + avatar (not their handle/id).
 Returns 404 if token is invalid, expired, or already used.
 
