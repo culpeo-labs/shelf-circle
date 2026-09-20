@@ -42,7 +42,7 @@ export function MyBooksScreen() {
         {tab === 'read' && (
           <HeaderButton label="+ Add a book I've read" onPress={() => navigation.navigate('AddPastRead')} />
         )}
-        {tab === 'want_to_read' && (
+        {(tab === 'want_to_read' || tab === 'reading') && (
           <HeaderButton label="+ Find a book" onPress={() => navigation.navigate('BookSearch')} />
         )}
       </View>
