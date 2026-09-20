@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -11,7 +11,12 @@ import {
   View,
 } from 'react-native';
 
-import { startFlow, submitFlowAction, type FlowAction, type FlowResult } from '../../auth/hankoFlowClient';
+import {
+  startFlow,
+  submitFlowAction,
+  type FlowAction,
+  type FlowResult,
+} from '../../auth/hankoFlowClient';
 import { useAuth } from '../../auth/AuthContext';
 
 /**
@@ -28,11 +33,41 @@ export function AuthFlowScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void restart();
-  }, [mode]);
+  const applyResult = useCallback(
+    // Named function expression so the recursive call below refers to this
+    // function's own name binding rather than the outer `const` (which is
+    // still being initialized while the callback body is being defined).
+    async function applyResult(result: FlowResult): Promise<void> {
+      if (result.authToken) {
+        await completeWithToken(result.authToken);
+        return;
+      }
 
-  async function restart() {
+      // An action with inputs that are all hidden (e.g. Hanko's
+      // `register_client_capabilities` preflight step) is a machine-only step —
+      // its values are meant to be computed and sent automatically, not
+      // presented as something to tap. React Native has no WebAuthn, so there's
+      // nothing meaningful to compute; submitting it empty (verified against a
+      // live Hanko project) is enough to advance the flow.
+      const autoAction = Object.entries(result.actions).find(
+        ([, action]) =>
+          Object.values(action.inputs).length > 0 &&
+          Object.values(action.inputs).every((i) => i.hidden),
+      );
+      if (autoAction) {
+        const [name] = autoAction;
+        await applyResult(await submitFlowAction(result, name, {}));
+        return;
+      }
+
+      setState(result);
+      setValues({});
+      setError(result.error?.message ?? null);
+    },
+    [completeWithToken],
+  );
+
+  const restart = useCallback(async () => {
     setState(null);
     setBusy(true);
     setError(null);
@@ -43,33 +78,11 @@ export function AuthFlowScreen() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [mode, applyResult]);
 
-  async function applyResult(result: FlowResult) {
-    if (result.authToken) {
-      await completeWithToken(result.authToken);
-      return;
-    }
-
-    // An action with inputs that are all hidden (e.g. Hanko's
-    // `register_client_capabilities` preflight step) is a machine-only step —
-    // its values are meant to be computed and sent automatically, not
-    // presented as something to tap. React Native has no WebAuthn, so there's
-    // nothing meaningful to compute; submitting it empty (verified against a
-    // live Hanko project) is enough to advance the flow.
-    const autoAction = Object.entries(result.actions).find(
-      ([, action]) => Object.values(action.inputs).length > 0 && Object.values(action.inputs).every((i) => i.hidden)
-    );
-    if (autoAction) {
-      const [name] = autoAction;
-      await applyResult(await submitFlowAction(result, name, {}));
-      return;
-    }
-
-    setState(result);
-    setValues({});
-    setError(result.error?.message ?? null);
-  }
+  useEffect(() => {
+    void restart();
+  }, [restart]);
 
   async function runAction(actionName: string, action: FlowAction) {
     if (!state) return;
@@ -114,10 +127,10 @@ export function AuthFlowScreen() {
   const backEntry = state.actions.back;
   const actionEntries = Object.entries(state.actions).filter(([name]) => name !== 'back');
   const withInputs = actionEntries.filter(([, a]) =>
-    Object.values(a.inputs).some((i) => !i.hidden)
+    Object.values(a.inputs).some((i) => !i.hidden),
   );
   const withoutInputs = actionEntries.filter(
-    ([, a]) => !Object.values(a.inputs).some((i) => !i.hidden)
+    ([, a]) => !Object.values(a.inputs).some((i) => !i.hidden),
   );
 
   return (
@@ -141,7 +154,9 @@ export function AuthFlowScreen() {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Shelf Circle</Text>
         <Text style={styles.subtitle}>
-          {mode === 'login' ? 'Sign in with your email to continue.' : 'Create an account to get started.'}
+          {mode === 'login'
+            ? 'Sign in with your email to continue.'
+            : 'Create an account to get started.'}
         </Text>
 
         {error && <Text style={styles.error}>{error}</Text>}
@@ -193,7 +208,7 @@ export function AuthFlowScreen() {
           style={styles.modeSwitch}
         >
           <Text style={styles.link}>
-            {mode === 'login' ? "New here? Create an account" : 'Already have an account? Sign in'}
+            {mode === 'login' ? 'New here? Create an account' : 'Already have an account? Sign in'}
           </Text>
         </Pressable>
       </ScrollView>

@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { ApiError } from '../api/client';
 import { setAuthToken as setApiAuthToken } from '../api/client';
@@ -31,11 +31,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    void restore();
+  const clearStoredSession = useCallback(async () => {
+    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await SecureStore.deleteItemAsync(USER_KEY);
+    setApiAuthToken(null);
   }, []);
 
-  async function restore() {
+  const restore = useCallback(async () => {
     const token = await SecureStore.getItemAsync(TOKEN_KEY);
     if (!token) {
       setStatus('signed-out');
@@ -57,9 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await clearStoredSession();
       setStatus('signed-out');
     }
-  }
+  }, [clearStoredSession]);
 
-  async function completeWithToken(token: string) {
+  useEffect(() => {
+    void restore();
+  }, [restore]);
+
+  const completeWithToken = useCallback(async (token: string) => {
     await SecureStore.setItemAsync(TOKEN_KEY, token);
     setApiAuthToken(token);
     try {
@@ -74,29 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       throw e;
     }
-  }
+  }, []);
 
-  async function completeOnboarding(newUser: User) {
+  const completeOnboarding = useCallback(async (newUser: User) => {
     await SecureStore.setItemAsync(USER_KEY, JSON.stringify(newUser));
     setUser(newUser);
     setStatus('signed-in');
-  }
+  }, []);
 
-  async function clearStoredSession() {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
-    await SecureStore.deleteItemAsync(USER_KEY);
-    setApiAuthToken(null);
-  }
-
-  async function signOut() {
+  const signOut = useCallback(async () => {
     await clearStoredSession();
     setUser(null);
     setStatus('signed-out');
-  }
+  }, [clearStoredSession]);
 
   const value = useMemo(
     () => ({ status, user, completeWithToken, completeOnboarding, signOut }),
-    [status, user]
+    [status, user, completeWithToken, completeOnboarding, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

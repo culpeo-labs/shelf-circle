@@ -18,8 +18,17 @@ export function TimelineScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user } = useAuth();
   const { upsertFriends } = useFriends();
-  const { data, isLoading, isError, error, refetch, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useFeed();
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isRefetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useFeed();
 
   const items = useMemo(() => data?.pages.flat() ?? [], [data]);
   // Duplicate created_at timestamps across pages are possible; de-dupe by id.
@@ -33,7 +42,7 @@ export function TimelineScreen() {
     // actors are one of the two ways we discover who's actually a friend.
     const others = deduped.filter((item) => item.actor.id !== user?.id).map((item) => item.actor);
     if (others.length > 0) upsertFriends(others);
-  }, [deduped, user?.id]);
+  }, [deduped, user?.id, upsertFriends]);
 
   if (isLoading) return <LoadingScreen />;
   if (isError) {
@@ -59,7 +68,10 @@ export function TimelineScreen() {
       data={deduped}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
-        <FeedRow item={item} onPress={() => navigation.navigate('BookDetail', { bookId: item.book.id })} />
+        <FeedRow
+          item={item}
+          onPress={() => navigation.navigate('BookDetail', { bookId: item.book.id })}
+        />
       )}
       refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />}
       onEndReached={() => {
