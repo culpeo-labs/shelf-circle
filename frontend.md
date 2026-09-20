@@ -1,10 +1,18 @@
-# Spec: Leecommend mobile app (React Native)
+# Spec: Shelf Circle mobile app (React Native)
 
 Implementation brief for the front-end agent. Describes every screen and
 behaviour the v1 app must ship, and the exact backend contract it runs against.
 
 Read `spec/architecture.md` for product context and `spec/friends.md` for the
 (not-yet-built) invite flow this app should be structured to accept later.
+
+> **Status note:** this brief was written before real auth landed. §3 and §5
+> below describe the original no-auth design; the backend now requires a
+> Hanko Cloud JWT on every route (except onboarding, which needs a valid
+> token but no profile row yet). The corrections are called out inline where
+> they matter — treat §3/§5's *shape* (what data flows where) as right and
+> their *auth-free* framing as superseded. `frontend/src/auth/` implements
+> the real flow.
 
 ---
 
@@ -38,9 +46,16 @@ your library* (not built yet — see §9).
 
 ## 3. Backend contract
 
-Base URL: `EXPO_PUBLIC_API_BASE_URL`. JSON in, JSON out. **No authentication**
-yet — every call passes explicit ids (see §5 for how the app decides "who am
-I"). All timestamps are RFC 3339 UTC strings.
+Base URL: `EXPO_PUBLIC_API_BASE_URL`. JSON in, JSON out. All timestamps are
+RFC 3339 UTC strings.
+
+**Superseded:** every route below now requires `Authorization: Bearer
+<Hanko JWT>` (see §5) — the acting user comes from the token, not from an
+explicit id in the request. Where a row below still shows a body containing
+`user_id` / `user_handle_a` / `from_user_id` etc., drop that field; the
+server infers it. `GET /users/{id}/book-statuses`, `/library`,
+`/recommendations/inbox`, and `/feed` are also **self-only** now (a 403 if
+`{id}` isn't the caller) — see §6.9 for what this breaks.
 
 ### Error format
 
@@ -58,19 +73,19 @@ Any non-2xx response body is `{ "error": string }`.
 | Method & path | Body | Returns | Notes |
 |---|---|---|---|
 | `GET /health` | — | `ok` (text) | connectivity check |
-| `POST /users` | `{ handle, display_name, locale? }` | `User` | `locale` defaults `"en"`. **Duplicate `handle` currently returns 500** (see §9). |
+| `POST /users` | `{ handle, display_name, locale? }` | `User` | `locale` defaults `"en"`. Onboarding — the Hanko user id/email come from the token. **Duplicate `handle` (or a second call for the same token) is 409**, not 500. |
 | `GET /users/{id}` | — | `User` \| 404 | |
 | `GET /users/by-handle/{handle}` | — | `User` \| 404 | how you "look someone up" |
-| `POST /friendships` | `{ user_handle_a, user_handle_b }` | `Friendship` | Mutual **immediately**, no request/accept step. Idempotent. Rows are canonicalized (`user_a_id < user_b_id`) — don't assume a↔b matches what you sent. 400 if a handle doesn't exist or the two are equal. |
+| `POST /friendships` | `{ user_handle }` | `Friendship` | Friends *you* (the token's user) to `user_handle`. Mutual **immediately**, no request/accept step. Idempotent. Rows are canonicalized (`user_a_id < user_b_id`) — don't assume a↔b matches what you sent. 400 if the handle doesn't exist or it's your own. |
 | `GET /books/search?q=&limit=` | — | `BookSearchResult[]` | `limit` 1–40, default 20. Work-level, **not persisted**. Merges Open Library + Google Books. May be slow (1–4 s) or 502. |
 | `POST /books/resolve` | provider ref **or** full `ResolvedBook` | `BookWithEdition` | Upserts the book. Send `{ source, source_id }` for a search result; send a full `ResolvedBook` with `source: "manual"` for a hand-entered book. Idempotent on `(source, source_id)`. |
 | `GET /books/{id}` | — | `Book` \| 404 | |
-| `PUT /book-statuses` | `{ user_id, book_id, status, progress_percent?, rating? }` | `BookStatus` | Upsert (one status per user+book). `rating` (1–5) **only** valid with `status` `finished` / `did_not_finish`; sending it otherwise is 400, and it is cleared when moving to another status. Re-sending the same `status` with a new `progress_percent` does **not** create a timeline event. |
-| `GET /users/{id}/book-statuses` | — | `BookStatus[]` | raw rows, no book detail, newest-updated first |
-| `GET /users/{id}/library?shelf=` | — | `LibraryEntry[]` | `shelf` ∈ `reading` \| `read` \| `want_to_read` \| `did_not_finish` \| `all`; omit = all. `read` = finished ∪ did_not_finish. Includes book detail + rating. |
-| `POST /recommendations` | `{ from_user_id, to_user_id, book_id, note? }` | `Recommendation` | `book_id` must already exist — resolve first. Not deduped: sending twice makes two rows. |
-| `GET /users/{id}/recommendations/inbox` | — | `Recommendation[]` | recs sent **to** this user, newest first. No book/sender detail — hydrate client-side. |
-| `GET /users/{id}/feed?limit=&before=` | — | `FeedItem[]` | The timeline. Friends **+ self**. `limit` 1–100, default 50. `before` = RFC 3339; pass the last item's `created_at` for the next page. Reading-status events only. |
+| `PUT /book-statuses` | `{ book_id, status, progress_percent?, rating? }` | `BookStatus` | Upsert (one status per user+book), for the token's user. `rating` (1–5) **only** valid with `status` `finished` / `did_not_finish`; sending it otherwise is 400, and it is cleared when moving to another status. Re-sending the same `status` with a new `progress_percent` does **not** create a timeline event. |
+| `GET /users/{id}/book-statuses` | — | `BookStatus[]` | **self-only** — `{id}` must be the caller (403 otherwise). Raw rows, no book detail, newest-updated first. |
+| `GET /users/{id}/library?shelf=` | — | `LibraryEntry[]` | **self-only** — `{id}` must be the caller (403 otherwise). `shelf` ∈ `reading` \| `read` \| `want_to_read` \| `did_not_finish` \| `all`; omit = all. `read` = finished ∪ did_not_finish. Includes book detail + rating. |
+| `POST /recommendations` | `{ to_user_id, book_id, note? }` | `Recommendation` | From the token's user. `book_id` must already exist — resolve first. Not deduped: sending twice makes two rows. |
+| `GET /users/{id}/recommendations/inbox` | — | `Recommendation[]` | **self-only** — `{id}` must be the caller (403 otherwise). Recs sent **to** this user, newest first. No book/sender detail — hydrate client-side. |
+| `GET /users/{id}/feed?limit=&before=` | — | `FeedItem[]` | **self-only** — `{id}` must be the caller (403 otherwise). The timeline. Friends **+ self**. `limit` 1–100, default 50. `before` = RFC 3339; pass the last item's `created_at` for the next page. Reading-status events only. |
 
 ### TypeScript types (authoritative — mirror the backend)
 
@@ -205,10 +220,9 @@ interface FeedItem {
 ## 4. Navigation map
 
 ```
-Root
-├─ Onboarding (shown until a local identity exists)
-│   ├─ Create identity   (handle + display name)
-│   └─ Optional: add first friend
+Root (driven by AuthContext's `status`)
+├─ AuthFlow          (signed-out: Hanko login/registration, §5)
+├─ CreateIdentity    (onboarding: token valid, no profile row yet, §5)
 └─ Main (bottom tabs)
     ├─ Timeline        → BookDetail
     ├─ My Books        → BookDetail, AddPastRead, BookSearch
@@ -224,26 +238,38 @@ Modal / pushed from multiple places:
 
 ---
 
-## 5. Identity & onboarding (no auth yet)
+## 5. Identity & onboarding (superseded — real Hanko auth)
 
-There is no login. The app maintains a **local identity**:
+This section originally specced a local, auth-free identity. That's gone —
+real auth landed first. What's actually built (`frontend/src/auth/`):
 
-1. On launch, read `currentUser` (a `User`) from `AsyncStorage`.
-2. If absent → **Onboarding**:
-   - **Create identity**: fields `display_name` (required) and `handle`
-     (required, lowercase, `[a-z0-9_]`, client-validated). Call `POST /users`.
-     - On success: store the returned `User` as `currentUser`, enter Main.
-     - On 500 (likely handle taken — see §9): show "That handle may be taken,
-       try another." Also offer **"I already have a handle"** →
-       `GET /users/by-handle/{handle}`, and if found, adopt that `User` as the
-       local identity (this is the stand-in for sign-in on a new device).
-3. `currentUser.id` is threaded into every endpoint that needs a user id.
-   Expose it via a `useCurrentUser()` hook / context.
-4. **Me** tab has "Sign out" = clear local identity, return to Onboarding
-   (does not delete the server user).
-
-When real auth lands this whole section is replaced; keep identity access
-behind the hook so the swap is contained.
+1. On launch, `AuthProvider` reads a stored Hanko session token
+   (`expo-secure-store`) and calls `GET /me`. Three outcomes:
+   - no token → **AuthFlow** (sign in or create an account — see point 2
+     below).
+   - token valid, `GET /me` 404 → **onboarding** (profile row doesn't exist
+     yet for this token).
+   - token valid, `GET /me` 200 → signed in, straight to Main.
+2. **AuthFlow screen** drives Hanko's Flow API (`/login` or `/registration`,
+   user-toggleable) generically — it renders whatever actions/inputs the
+   current flow state returns rather than hardcoding step names, since the
+   exact steps depend on the Hanko Cloud project's configured login methods.
+   Success yields a session JWT (`X-Auth-Token` response header), stored via
+   `completeWithToken`.
+3. **Create identity** (onboarding, shown once per new account): fields
+   `display_name` and `handle` (lowercase, `[a-z0-9_]`, client-validated).
+   Calls `POST /users` using the Hanko token (the server reads the Hanko user
+   id/email from the token, not the request body).
+   - On success: `completeOnboarding` stores the returned `User`, enters Main.
+   - On 409: "That handle may be taken — try another."
+4. `useAuth()` exposes `{ status, user, ... }`; `status` drives top-level
+   navigation (`RootNavigator`). There is no more "local identity swap" —
+   signing in on a new device is just signing in again with Hanko.
+5. **Me** tab "Sign out" clears the stored token and returns to AuthFlow
+   (does not delete the server user or the Hanko identity).
+6. **Known gap:** no session refresh. Hanko JWTs are short-lived; an expired
+   token just sends the user back through AuthFlow rather than silently
+   refreshing.
 
 ---
 
@@ -381,10 +407,13 @@ React Query cache invalidation after a mutation.
     feed. Hydrate each via `GET /users/{id}`.
   - **This is a known backend gap (§9)** — a `GET /users/{id}/friends`
     endpoint should be added; until then the derived list is best-effort.
-- **Row:** avatar, display name, `@handle`. Tap → FriendProfile (their `read`
-  shelf via `GET /users/{friendId}/library?shelf=read`, plus `reading`).
+- **Row:** avatar, display name, `@handle`. Tap → FriendProfile.
 - **Add friend** button → AddFriend.
 - **Empty state:** prominent "Add a friend to get started."
+- **Superseded:** FriendProfile can no longer show a friend's `read`/`reading`
+  shelf — `GET /users/{id}/library` is self-only now (§3), so a friend's
+  library is unreachable with no workaround short of a backend change. As
+  built, FriendProfile shows name/avatar only.
 
 ### 6.10 Add friend (AddFriend)
 
@@ -468,11 +497,12 @@ React Query cache invalidation after a mutation.
 
 Design around these — **don't** build screens that require them:
 
-- **Auth.** No login/session. Identity is local (§5). Duplicate `handle` on
-  `POST /users` returns **500**, not a clean 409 — treat 500 on that call as
-  "handle taken".
 - **List my friends.** No `GET /users/{id}/friends`. Friend list is derived
   client-side (§6.9). Flag for backend follow-up.
+- **A friend's shelf/library/feed.** `GET /users/{id}/library`,
+  `/book-statuses`, `/feed`, and `/recommendations/inbox` are self-only
+  (403 for anyone else's id) — see §6.9. FriendProfile is name/avatar only
+  until there's a backend endpoint for this.
 - **Edit profile.** No `PATCH /users` — no display name / avatar / locale
   update. Avatars are always `null` today (no upload endpoint).
 - **Ratings in the timeline.** `FeedItem` has `status`/`verb` but no `rating`.
