@@ -50,9 +50,9 @@ const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 };
 // margin — the OS crops to a mask (circle, squircle, teardrop, ...) and only
 // guarantees the inner ~66% survives every shape.
 const TARGETS = [
-  { file: 'icon.png', size: 1024, mode: 'pad', padding: 0.08 },
-  { file: 'splash-icon.png', size: 1024, mode: 'pad-transparent', padding: 0.12 },
-  { file: 'favicon.png', size: 48, mode: 'pad', padding: 0.06 },
+  { file: 'icon.png', size: 1024, mode: 'pad', padding: 0.02 },
+  { file: 'splash-icon.png', size: 1024, mode: 'pad-transparent', padding: 0.08 },
+  { file: 'favicon.png', size: 48, mode: 'pad', padding: 0.02 },
   { file: 'android-icon-foreground.png', size: 512, mode: 'pad-transparent', padding: 0.17 },
   { file: 'android-icon-monochrome.png', size: 432, mode: 'monochrome', padding: 0.17 },
   { file: 'android-icon-background.png', size: 512, mode: 'solid' },
