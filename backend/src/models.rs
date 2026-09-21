@@ -129,3 +129,21 @@ pub struct Friendship {
     pub user_b_id: Uuid,
     pub created_at: DateTime<Utc>,
 }
+
+/// Response for `POST /invites`. The client builds the actual shareable
+/// link/QR payload from `token` (a `shelfcircle://invite/{token}` deep link
+/// today) — the server doesn't need to know the app's URL scheme.
+#[derive(Debug, Serialize)]
+pub struct Invite {
+    pub token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Response for `GET /invites/{token}` (public, no auth): just enough for the
+/// client to show "so-and-so wants to be your friend" before the recipient
+/// has signed in — never the inviter's handle/id.
+#[derive(Debug, Serialize, FromRow)]
+pub struct InvitePreview {
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+}
