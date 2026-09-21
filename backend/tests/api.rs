@@ -433,6 +433,7 @@ async fn book_status_backdated_suppresses_feed_event_but_not_the_shelf() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {backlog}");
+    assert_eq!(backlog["backdated"], true);
 
     let (status, feed) = send(
         &app.router,
@@ -486,6 +487,93 @@ async fn book_status_backdated_suppresses_feed_event_but_not_the_shelf() {
         feed.as_array().unwrap().len(),
         1,
         "a normal status change should still appear in the feed"
+    );
+}
+
+/// `backdated` is meant to badge "this row's current status came from the
+/// backlog flow" — it must clear the moment the status genuinely changes
+/// (a real reread), but re-submitting the *same* status (e.g. just editing
+/// the rating) must leave it alone, since nothing about "when did this
+/// status take effect" actually changed.
+#[tokio::test]
+async fn book_status_backdated_flag_clears_on_status_change_only() {
+    let app = TestApp::new().await;
+    let (token, user_id) = onboard(&app, "hanko|a", "alice").await;
+    let book = resolve_book(&app, &token, "OL-reread").await;
+
+    let (status, row) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": "finished", "rating": 3, "backdated": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {row}");
+    assert_eq!(row["backdated"], true);
+
+    // Re-submitting the *same* status (editing the rating, not backdated
+    // this time) must not clear the flag — nothing about the status changed.
+    let (status, row) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": "finished", "rating": 5 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {row}");
+    assert_eq!(
+        row["backdated"], true,
+        "same status (finished -> finished) must not clear backdated"
+    );
+
+    // A genuine status change (starting a real reread) must clear it.
+    let (status, row) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": "currently_reading", "progress_percent": 10 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {row}");
+    assert_eq!(
+        row["backdated"], false,
+        "a real status change (finished -> currently_reading) must clear backdated"
+    );
+
+    // Finishing the reread for real produces its own feed event — the
+    // earlier backdated finish contributed none, so this is the only one.
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": "finished", "rating": 4 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, feed) = send(
+        &app.router,
+        get_request(&format!("/users/{user_id}/feed"), Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let feed = feed.as_array().unwrap();
+    assert_eq!(
+        feed.iter().filter(|e| e["status"] == "finished").count(),
+        1,
+        "only the real reread's finish should be in the feed, not the backdated one"
     );
 }
 

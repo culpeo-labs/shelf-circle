@@ -85,6 +85,12 @@ pub struct BookStatus {
     pub rating: Option<i16>,
     pub updated_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    /// True if this row's *current* status was set via the backlog
+    /// (`backdated: true`) flow — lets the client show e.g. a "logged as
+    /// backlog" badge. Cleared automatically the next time the status
+    /// actually changes (see `set_status`'s upsert), so a real reread un-badges
+    /// it; re-submitting the same status (editing the rating, say) does not.
+    pub backdated: bool,
 }
 
 #[derive(Debug, Deserialize)]

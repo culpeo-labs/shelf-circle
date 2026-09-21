@@ -70,13 +70,25 @@ async fn set_status(
 
     let status = sqlx::query_as::<_, BookStatus>(
         r#"
-        insert into book_statuses (user_id, book_id, status, progress_percent, rating)
-        values ($1, $2, $3, $4, $5)
+        insert into book_statuses (user_id, book_id, status, progress_percent, rating, backdated)
+        values ($1, $2, $3, $4, $5, $6)
         on conflict (user_id, book_id) do update
             set status = excluded.status,
                 progress_percent = excluded.progress_percent,
                 rating = excluded.rating,
-                updated_at = now()
+                updated_at = now(),
+                -- Only take the incoming `backdated` value when the status is
+                -- actually changing; otherwise keep whatever was already on
+                -- the row. This is what lets a real status transition (e.g.
+                -- finished -> currently_reading for a genuine reread)
+                -- automatically clear a stale backdated flag, while
+                -- re-submitting the *same* status (editing the rating, say)
+                -- leaves it alone.
+                backdated = case
+                    when excluded.status is distinct from book_statuses.status
+                        then excluded.backdated
+                    else book_statuses.backdated
+                end
         returning *
         "#,
     )
@@ -85,6 +97,7 @@ async fn set_status(
     .bind(input.status)
     .bind(input.progress_percent)
     .bind(rating)
+    .bind(input.backdated)
     .fetch_one(&mut *tx)
     .await?;
 
