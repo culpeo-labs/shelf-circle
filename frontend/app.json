@@ -2,6 +2,7 @@
   "expo": {
     "name": "Shelf Circle",
     "slug": "shelf-circle",
+    "scheme": "shelfcircle",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,7 +27,16 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-secure-store", "expo-image"],
+    "plugins": [
+      "expo-secure-store",
+      "expo-image",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Shelf Circle uses your camera to scan a friend's invite QR code."
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "3a15d1a8-fa2a-4d72-b8f2-a149ce95626f"

@@ -7,6 +7,8 @@ import type {
   CreateRecommendationInput,
   CreateUserInput,
   Friendship,
+  Invite,
+  InvitePreview,
   LibraryEntry,
   LibraryShelf,
   FeedItem,
@@ -25,12 +27,16 @@ export const createUser = (input: CreateUserInput) =>
 
 export const getUser = (id: UUID) => apiFetch<User>(`/users/${id}`);
 
-export const getUserByHandle = (handle: string) =>
-  apiFetch<User>(`/users/by-handle/${encodeURIComponent(handle)}`);
+/** Creates a new invite token for the caller (share as a QR code or link). */
+export const createInvite = () => apiFetch<Invite>('/invites', { method: 'POST' });
 
-/** Friends the other person by handle; the caller is implied by the auth token. */
-export const createFriendship = (userHandle: string) =>
-  apiFetch<Friendship>('/friendships', { method: 'POST', body: { user_handle: userHandle } });
+/** Public — no auth token needed. 404 if the token is invalid/expired/used. */
+export const getInvitePreview = (token: string) =>
+  apiFetch<InvitePreview>(`/invites/${encodeURIComponent(token)}`);
+
+/** Accepts an invite: creates the friendship, marks the token used. */
+export const acceptInvite = (token: string) =>
+  apiFetch<Friendship>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
 
 export const searchBooks = (q: string, limit = 20) =>
   apiFetch<BookSearchResult[]>('/books/search', { query: { q, limit } });

@@ -18,6 +18,8 @@ export type RootStackParamList = {
   };
   RecommendToFriend: { bookId: string };
   AddFriend: undefined;
+  ScanInvite: undefined;
+  AcceptInvite: { token: string };
   FriendProfile: { userId: string; displayName: string };
 };
 

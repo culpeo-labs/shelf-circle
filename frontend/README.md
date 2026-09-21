@@ -95,3 +95,21 @@ individual's `eas login`.
   server round-trip.
 - **No offline banner / `NetInfo` handling.** Screens don't currently detect
   or surface being offline.
+- **Invite links use a custom URL scheme (`shelfcircle://`), not a universal
+  link.** Deliberate for now — a real universal link needs a domain you
+  control serving Apple's `apple-app-site-association` and Android's
+  `assetlinks.json`, which doesn't exist yet. Consequence: opening an invite
+  link only works if the recipient already has the app installed (fine for
+  scanning a QR code in person; a shared link has no smart App Store
+  fallback for someone who doesn't have the app yet).
+- **Opening an invite link while signed out drops the token.**
+  `AcceptInvite` only exists in the signed-in navigation stack (see
+  `App.tsx`'s `linking` config comment) — there's no pending-invite state
+  carried through sign-in/onboarding yet. Scanning a QR code in-app always
+  works since that requires already being signed in to reach the scanner.
+- **AddFriendScreen mints a fresh invite token every time it's opened**,
+  rather than reusing a still-valid unused one. The backend explicitly
+  allows several outstanding invites per user (see `INVITE_TTL`'s doc
+  comment in `backend/src/routes/invites.rs`), so this isn't incorrect,
+  just wasteful — reopening the screen a few times before actually sharing
+  leaves that many extra live tokens until they expire in 7 days.

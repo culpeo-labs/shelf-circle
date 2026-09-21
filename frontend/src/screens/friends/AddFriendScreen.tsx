@@ -1,123 +1,92 @@
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import React, { useEffect } from 'react';
+import { ActivityIndicator, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 
 import { ApiError } from '../../api/client';
-import { getUserByHandle } from '../../api/endpoints';
-import type { User } from '../../api/types';
-import { Avatar } from '../../components/Avatar';
-import { useFriends } from '../../friends/FriendsContext';
-import { useCreateFriendship } from '../../hooks/queries';
+import { useCreateInvite } from '../../hooks/queries';
+import type { RootStackParamList } from '../../navigation/types';
+import { buildInviteUrl } from '../../utils/inviteLink';
 
+/**
+ * "Add a friend" is invite-based, not handle/search-based (see friends.md):
+ * generate a token, show it as a QR code someone can scan in person, and
+ * offer the same link through the share sheet for the remote case. The
+ * other half — scanning / opening one of these — is ScanInviteScreen /
+ * AcceptInviteScreen.
+ */
 export function AddFriendScreen() {
-  const navigation = useNavigation();
-  const { upsertFriend } = useFriends();
-  const createFriendship = useCreateFriendship();
-
-  const [handle, setHandle] = useState('');
-  const [preview, setPreview] = useState<User | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const createInvite = useCreateInvite();
+  const { mutate: generateInvite } = createInvite;
 
   useEffect(() => {
-    const trimmed = handle.trim().toLowerCase();
-    setPreview(null);
-    setPreviewError(null);
-    if (trimmed.length === 0) return;
-    const id = setTimeout(async () => {
-      setChecking(true);
-      try {
-        const user = await getUserByHandle(trimmed);
-        setPreview(user);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) setPreviewError('No such handle.');
-      } finally {
-        setChecking(false);
-      }
-    }, 400);
-    return () => clearTimeout(id);
-  }, [handle]);
+    generateInvite();
+  }, [generateInvite]);
 
-  async function submit() {
-    const trimmed = handle.trim().toLowerCase();
-    if (!trimmed) return;
-    try {
-      await createFriendship.mutateAsync(trimmed);
-      const friend = preview ?? (await getUserByHandle(trimmed));
-      upsertFriend(friend);
-      navigation.goBack();
-    } catch {
-      // surfaced via createFriendship.isError below
-    }
+  const inviteUrl = createInvite.data ? buildInviteUrl(createInvite.data.token) : null;
+
+  async function share() {
+    if (!inviteUrl) return;
+    await Share.share({ message: `Add me on Shelf Circle: ${inviteUrl}` });
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>Friend's handle</Text>
-      <TextInput
-        style={styles.input}
-        value={handle}
-        onChangeText={setHandle}
-        placeholder="ada"
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoFocus
-      />
+      <Text style={styles.title}>Invite a friend</Text>
+      <Text style={styles.subtitle}>
+        Share this QR code or link — whoever opens it can add you as a friend. It expires in 7 days
+        and works once.
+      </Text>
 
-      {checking && <ActivityIndicator style={styles.previewSpinner} color="#3b6e5e" />}
-      {preview && (
-        <View style={styles.preview}>
-          <Avatar url={preview.avatar_url} name={preview.display_name} />
-          <Text style={styles.previewName}>{preview.display_name}</Text>
-        </View>
-      )}
-      {previewError && <Text style={styles.error}>{previewError}</Text>}
-      {createFriendship.isError && (
+      {createInvite.isPending && <ActivityIndicator color="#3b6e5e" />}
+      {createInvite.isError && (
         <Text style={styles.error}>
-          {createFriendship.error instanceof ApiError
-            ? createFriendship.error.message
-            : 'Could not add friend.'}
+          {createInvite.error instanceof ApiError
+            ? createInvite.error.message
+            : 'Could not create an invite.'}
         </Text>
       )}
 
-      <Pressable
-        style={[styles.button, (!preview || createFriendship.isPending) && styles.buttonDisabled]}
-        onPress={submit}
-        disabled={!preview || createFriendship.isPending}
-      >
-        {createFriendship.isPending ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Add friend</Text>
-        )}
+      {inviteUrl && (
+        <>
+          <View style={styles.qrWrapper}>
+            <QRCode value={inviteUrl} size={220} />
+          </View>
+          <Pressable style={styles.button} onPress={share}>
+            <Text style={styles.buttonText}>Share link</Text>
+          </Pressable>
+        </>
+      )}
+
+      <Pressable style={styles.scanLink} onPress={() => navigation.navigate('ScanInvite')}>
+        <Text style={styles.scanLinkText}>Scan a friend's QR code instead</Text>
       </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 14 },
-  label: { fontSize: 13, fontWeight: '600', color: '#6b6456' },
-  input: {
+  container: { flex: 1, padding: 20, gap: 16, alignItems: 'center' },
+  title: { fontSize: 20, fontWeight: '700', color: '#2b2a26', alignSelf: 'stretch' },
+  subtitle: { fontSize: 14, color: '#6b6456', alignSelf: 'stretch' },
+  qrWrapper: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#d9d3c4',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    backgroundColor: '#fff',
   },
-  previewSpinner: { alignSelf: 'flex-start' },
-  preview: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  previewName: { fontSize: 15, fontWeight: '600', color: '#2b2a26' },
-  error: { color: '#b3432b' },
+  error: { color: '#b3432b', alignSelf: 'stretch' },
   button: {
     backgroundColor: '#3b6e5e',
     borderRadius: 8,
     paddingVertical: 14,
+    paddingHorizontal: 32,
     alignItems: 'center',
-    marginTop: 8,
   },
-  buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  scanLink: { marginTop: 8 },
+  scanLinkText: { color: '#3b6e5e', fontWeight: '500' },
 });

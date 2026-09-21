@@ -136,6 +136,21 @@ export interface CreateRecommendationInput {
   note?: string | null;
 }
 
+/** POST /invites response — the client builds the shareable deep link/QR
+ * payload from `token` itself (see `buildInviteUrl`); the server doesn't
+ * know about the app's URL scheme. */
+export interface Invite {
+  token: string;
+  expires_at: Timestamp;
+}
+
+/** GET /invites/{token} response (public — no auth). Never the inviter's
+ * handle/id, just enough to show "so-and-so wants to be your friend". */
+export interface InvitePreview {
+  display_name: string;
+  avatar_url: string | null;
+}
+
 export interface FeedItem {
   id: UUID;
   created_at: Timestamp;

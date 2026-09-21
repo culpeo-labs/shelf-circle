@@ -9,8 +9,10 @@ import { AddPastReadScreen } from '../screens/books/AddPastReadScreen';
 import { BookDetailScreen } from '../screens/books/BookDetailScreen';
 import { BookSearchScreen } from '../screens/books/BookSearchScreen';
 import { FinishBookScreen } from '../screens/books/FinishBookScreen';
+import { AcceptInviteScreen } from '../screens/friends/AcceptInviteScreen';
 import { AddFriendScreen } from '../screens/friends/AddFriendScreen';
 import { FriendProfileScreen } from '../screens/friends/FriendProfileScreen';
+import { ScanInviteScreen } from '../screens/friends/ScanInviteScreen';
 import { RecommendToFriendScreen } from '../screens/recommendations/RecommendToFriendScreen';
 import { MainTabs } from './MainTabs';
 import type { RootStackParamList } from './types';
@@ -68,6 +70,16 @@ export function RootNavigator() {
             name="AddFriend"
             component={AddFriendScreen}
             options={{ title: 'Add a friend', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="ScanInvite"
+            component={ScanInviteScreen}
+            options={{ title: 'Scan invite', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="AcceptInvite"
+            component={AcceptInviteScreen}
+            options={{ title: 'Friend invite', presentation: 'modal' }}
           />
           <Stack.Screen
             name="FriendProfile"
