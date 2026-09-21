@@ -30,6 +30,7 @@ export function AuthFlowScreen() {
   const [mode, setMode] = useState<'login' | 'registration'>('login');
   const [state, setState] = useState<FlowResult | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [revealedFields, setRevealedFields] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +63,7 @@ export function AuthFlowScreen() {
 
       setState(result);
       setValues({});
+      setRevealedFields({});
       setError(result.error?.message ?? null);
     },
     [completeWithToken],
@@ -165,19 +167,36 @@ export function AuthFlowScreen() {
           <View key={name} style={styles.card}>
             {Object.values(action.inputs)
               .filter((input) => !input.hidden)
-              .map((input) => (
-                <TextInput
-                  key={input.name}
-                  style={styles.input}
-                  placeholder={prettify(input.name)}
-                  value={values[input.name] ?? ''}
-                  onChangeText={(text) => setValues((v) => ({ ...v, [input.name]: text }))}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType={input.name.includes('email') ? 'email-address' : 'default'}
-                  editable={!busy}
-                />
-              ))}
+              .map((input) => {
+                const isPassword = input.type === 'password';
+                const revealed = revealedFields[input.name] ?? false;
+                return (
+                  <View key={input.name} style={styles.inputWrapper}>
+                    <TextInput
+                      style={[styles.input, isPassword && styles.inputWithToggle]}
+                      placeholder={prettify(input.name)}
+                      value={values[input.name] ?? ''}
+                      onChangeText={(text) => setValues((v) => ({ ...v, [input.name]: text }))}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType={input.name.includes('email') ? 'email-address' : 'default'}
+                      secureTextEntry={isPassword && !revealed}
+                      editable={!busy}
+                    />
+                    {isPassword && (
+                      <Pressable
+                        style={styles.revealToggle}
+                        onPress={() =>
+                          setRevealedFields((r) => ({ ...r, [input.name]: !revealed }))
+                        }
+                        hitSlop={8}
+                      >
+                        <Text style={styles.revealToggleText}>{revealed ? 'Hide' : 'Show'}</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
             <Pressable
               style={[styles.button, busy && styles.buttonDisabled]}
               onPress={() => runAction(name, action)}
@@ -231,6 +250,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: '700', color: '#2b2a26', textAlign: 'center' },
   subtitle: { fontSize: 15, color: '#6b6456', textAlign: 'center', marginBottom: 8 },
   card: { gap: 10 },
+  inputWrapper: { justifyContent: 'center' },
   input: {
     borderWidth: 1,
     borderColor: '#d9d3c4',
@@ -240,6 +260,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#fff',
   },
+  inputWithToggle: { paddingRight: 64 },
+  revealToggle: { position: 'absolute', right: 12, paddingVertical: 8, paddingHorizontal: 4 },
+  revealToggleText: { color: '#3b6e5e', fontWeight: '600', fontSize: 13 },
   button: {
     backgroundColor: '#3b6e5e',
     borderRadius: 8,
