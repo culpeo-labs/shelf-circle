@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ApiResult};
@@ -26,11 +27,20 @@ async fn create_friendship(
         return Err(ApiError::BadRequest("cannot friend yourself".into()));
     }
 
-    let (low, high) = if me.id < other.id {
-        (me.id, other.id)
-    } else {
-        (other.id, me.id)
-    };
+    upsert_friendship(&pool, me.id, other.id).await
+}
+
+/// Shared by `create_friendship` and `invites::accept_invite` (per friends.md:
+/// "reuse the existing canonicalized friendship insert logic"). Generic over
+/// the executor so a caller that needs this inside a transaction (accept_invite
+/// does, to close a check-then-act race on the invite token) can pass `&mut
+/// *tx` instead of a bare pool.
+pub async fn upsert_friendship(
+    executor: impl sqlx::PgExecutor<'_>,
+    a: Uuid,
+    b: Uuid,
+) -> ApiResult<Json<Friendship>> {
+    let (low, high) = if a < b { (a, b) } else { (b, a) };
 
     let friendship = sqlx::query_as::<_, Friendship>(
         r#"
@@ -42,7 +52,7 @@ async fn create_friendship(
     )
     .bind(low)
     .bind(high)
-    .fetch_one(&pool)
+    .fetch_one(executor)
     .await?;
 
     Ok(Json(friendship))

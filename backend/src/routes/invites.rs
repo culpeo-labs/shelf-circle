@@ -5,9 +5,10 @@ use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::friendships::upsert_friendship;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{Friendship, Invite, InvitePreview, User};
+use crate::models::{Friendship, Invite, InvitePreview};
 use crate::state::AppState;
 
 /// How long an invite token stays redeemable. Not single-use of the whole
@@ -27,7 +28,10 @@ async fn create_invite(
     State(pool): State<PgPool>,
     CurrentUser(me): CurrentUser,
 ) -> ApiResult<Json<Invite>> {
-    let token = Uuid::new_v4().simple().to_string();
+    // A CSPRNG-backed token, kept URL-friendly-short per friends.md rather
+    // than using the full 32-char UUID hex string; 64 bits of randomness is
+    // ample for a single-use, 7-day-lived token at this app's scale.
+    let token = Uuid::new_v4().simple().to_string()[..16].to_string();
     let expires_at = Utc::now() + INVITE_TTL;
 
     sqlx::query(
@@ -64,49 +68,37 @@ async fn get_invite(
 /// already used, expired, or unknown is a 400, same as accepting your own
 /// invite — both are just "this invite doesn't work", not a 404/403
 /// distinction worth exposing.
+///
+/// The claim (`update ... where used_at is null ... returning`) and the
+/// friendship insert run in one transaction so two concurrent accepts of the
+/// same token can't both win: a plain check-then-act (select, then insert,
+/// then a separate unconditional update) would let two callers both pass the
+/// `used_at is null` check before either update commits, since the update
+/// carried no such guard — silently accepting a single-use token twice.
 async fn accept_invite(
     State(pool): State<PgPool>,
     CurrentUser(me): CurrentUser,
     Path(token): Path<String>,
 ) -> ApiResult<Json<Friendship>> {
-    let inviter = sqlx::query_as::<_, User>(
-        "select u.id, u.handle, u.display_name, u.avatar_url, u.locale, u.created_at \
-         from invite_tokens it join users u on u.id = it.created_by_user_id \
-         where it.token = $1 and it.used_at is null and it.expires_at > now()",
+    let mut tx = pool.begin().await?;
+
+    let inviter_id = sqlx::query_scalar::<_, Uuid>(
+        "update invite_tokens set used_at = now(), used_by_user_id = $1 \
+         where token = $2 and used_at is null and expires_at > now() \
+         returning created_by_user_id",
     )
+    .bind(me.id)
     .bind(&token)
-    .fetch_optional(&pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::BadRequest("invite is invalid, expired, or already used".into()))?;
 
-    if inviter.id == me.id {
+    if inviter_id == me.id {
         return Err(ApiError::BadRequest("cannot accept your own invite".into()));
     }
 
-    let (low, high) = if me.id < inviter.id {
-        (me.id, inviter.id)
-    } else {
-        (inviter.id, me.id)
-    };
+    let friendship = upsert_friendship(&mut *tx, me.id, inviter_id).await?;
+    tx.commit().await?;
 
-    let friendship = sqlx::query_as::<_, Friendship>(
-        r#"
-        insert into friendships (user_a_id, user_b_id)
-        values ($1, $2)
-        on conflict (user_a_id, user_b_id) do update set user_a_id = excluded.user_a_id
-        returning id, user_a_id, user_b_id, created_at
-        "#,
-    )
-    .bind(low)
-    .bind(high)
-    .fetch_one(&pool)
-    .await?;
-
-    sqlx::query("update invite_tokens set used_at = now(), used_by_user_id = $1 where token = $2")
-        .bind(me.id)
-        .bind(&token)
-        .execute(&pool)
-        .await?;
-
-    Ok(Json(friendship))
+    Ok(friendship)
 }
