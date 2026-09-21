@@ -117,3 +117,29 @@ export function useCreateRecommendation() {
     mutationFn: (input: CreateRecommendationInput) => api.createRecommendation(input),
   });
 }
+
+export function useCreateInvite() {
+  return useMutation({
+    mutationFn: () => api.createInvite(),
+  });
+}
+
+/** Public preview of who an invite token is from — no auth needed. */
+export function useInvitePreview(token: string | undefined) {
+  return useQuery({
+    queryKey: ['invite-preview', token],
+    queryFn: () => api.getInvitePreview(token!),
+    enabled: !!token,
+  });
+}
+
+export function useAcceptInvite() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: (token: string) => api.acceptInvite(token),
+    onSuccess: () => {
+      if (user) void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
+    },
+  });
+}

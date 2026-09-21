@@ -4,7 +4,7 @@ Implementation brief for the front-end agent. Describes every screen and
 behaviour the v1 app must ship, and the exact backend contract it runs against.
 
 Read `spec/architecture.md` for product context and `spec/friends.md` for the
-(not-yet-built) invite flow this app should be structured to accept later.
+invite flow §6.10 below implements.
 
 > **Status note:** this brief was written before real auth landed. §3 and §5
 > below describe the original no-auth design; the backend now requires a
@@ -12,7 +12,9 @@ Read `spec/architecture.md` for product context and `spec/friends.md` for the
 > token but no profile row yet). The corrections are called out inline where
 > they matter — treat §3/§5's *shape* (what data flows where) as right and
 > their *auth-free* framing as superseded. `frontend/src/auth/` implements
-> the real flow.
+> the real flow. §6.10 (Add friend) is similarly superseded — the
+> invite-token flow `friends.md` specced has shipped, replacing the
+> handle-based flow originally written there.
 
 ---
 
@@ -415,20 +417,27 @@ React Query cache invalidation after a mutation.
   library is unreachable with no workaround short of a backend change. As
   built, FriendProfile shows name/avatar only.
 
-### 6.10 Add friend (AddFriend)
+### 6.10 Add friend (AddFriend / ScanInvite / AcceptInvite)
 
-- **Current (handle-based):** text field for the friend's `@handle`. On submit:
-  1. Optional pre-check `GET /users/by-handle/{handle}` for a nice preview
-     (name + avatar) and clear "no such handle" error.
-  2. `POST /friendships { user_handle_a: currentUser.handle, user_handle_b:
-     handle }`. Friendship is immediate and mutual; no pending state.
-  3. On success: add to the local friend list, invalidate `feed`, pop.
-- **Structure for the future:** `spec/friends.md` replaces this with QR-code /
-  invite-link redemption (`POST /invites`, `GET /invites/{token}`,
-  `POST /invites/{token}/accept`). Build this screen so the handle field is one
-  "method" and a **Scan / paste invite** method can be added beside it without
-  restructuring. Do **not** implement the invite endpoints now — they don't
-  exist yet.
+- **Superseded — this shipped as `friends.md`'s invite-token flow, not the
+  handle-based one this section originally specced.** `POST /invites`,
+  `GET /invites/{token}`, and `POST /invites/{token}/accept` all exist now.
+- **AddFriend:** on open, `POST /invites` to generate a token, then show it
+  both as a QR code (for scanning in person) and behind a "Share link"
+  button (native share sheet) — same token, two delivery methods, matching
+  `friends.md`'s intent. No handle field anymore.
+- **ScanInvite:** camera screen (`expo-camera`), scans a QR code, extracts
+  the token, navigates to AcceptInvite.
+- **AcceptInvite:** `token` route param, reached by ScanInvite or by opening
+  a deep link directly. `GET /invites/{token}` (public, no auth) to preview
+  who invited you; "Accept" calls `POST /invites/{token}/accept`, then adds
+  the friend locally and invalidates `feed`.
+- **Deep link caveat:** the app uses a `shelfcircle://` custom URL scheme,
+  not a hosted universal link (no domain/hosting for the Apple/Android
+  app-association files yet) — a shared link only opens the app if the
+  recipient already has it installed, and only routes to AcceptInvite while
+  signed in (no pending-invite-across-sign-in state yet). See
+  `frontend/README.md`'s Known gaps.
 
 ### 6.11 Me / Edit profile
 
