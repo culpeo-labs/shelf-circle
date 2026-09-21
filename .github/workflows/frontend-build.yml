@@ -12,6 +12,7 @@ on:
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-build.yml"
+  workflow_dispatch: {}
 
 concurrency:
   group: frontend-build-${{ github.ref }}
