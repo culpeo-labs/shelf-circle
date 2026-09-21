@@ -576,3 +576,88 @@ async fn recommendations_go_to_the_right_inbox() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn invites_full_flow() {
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let (status, invite) = send(
+        &app.router,
+        json_request("POST", "/invites", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {invite}");
+    let token = invite["token"].as_str().unwrap().to_string();
+    assert!(!invite["expires_at"].is_null());
+
+    // Public: no Authorization header needed to preview it.
+    let (status, preview) =
+        send(&app.router, get_request(&format!("/invites/{token}"), None)).await;
+    assert_eq!(status, StatusCode::OK, "body: {preview}");
+    assert_eq!(preview["display_name"], "alice");
+    assert!(preview.get("handle").is_none(), "handle must not leak");
+
+    // Unknown token previews as 404.
+    let (status, _) = send(&app.router, get_request("/invites/does-not-exist", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Alice cannot accept her own invite.
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_a),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "cannot accept your own invite"
+    );
+
+    // Bob accepts it: creates the canonicalized friendship.
+    let (status, friendship) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_b),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {friendship}");
+    let (lo, hi) = if id_a < id_b {
+        (&id_a, &id_b)
+    } else {
+        (&id_b, &id_a)
+    };
+    assert_eq!(friendship["user_a_id"], *lo);
+    assert_eq!(friendship["user_b_id"], *hi);
+
+    // Single-use: the same token can't be accepted again, by anyone.
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_b),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "already used");
+
+    // ...and it stops previewing too, once used.
+    let (status, _) = send(&app.router, get_request(&format!("/invites/{token}"), None)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "used invite no longer previews"
+    );
+}
