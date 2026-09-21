@@ -1,15 +1,19 @@
 import * as Linking from 'expo-linking';
 
 /**
- * `Linking.createURL` (rather than hand-building `shelfcircle://...`) keeps
- * the host segment empty (`shelfcircle:///invite/...`), which is what makes
- * `Linking.parse` reliably return the whole thing as `path` below instead of
- * splitting part of it off as a "hostname". It also resolves to the right
- * scheme automatically in Expo Go (`exp://...`) vs. a standalone build
- * (`shelfcircle://...`).
+ * `Linking.createURL` defaults to a *two*-slash URL (`shelfcircle://invite/...`)
+ * — `isTripleSlashed` must be passed explicitly to get a triple-slash one
+ * (`shelfcircle:///invite/...`). This matters: without it, WHATWG URL parsing
+ * (which `Linking.parse` and the standard `URL` constructor both do) treats
+ * `invite` as the *hostname*, not part of the path — `new
+ * URL('shelfcircle://invite/abc123').pathname` is `/abc123`, not
+ * `/invite/abc123` — so `parseInviteToken` below could never recover the
+ * token from the app's own generated links. Verified against
+ * `node_modules/expo-linking`'s actual source and a plain `new URL(...)`
+ * trace, not just the docs.
  */
 export function buildInviteUrl(token: string): string {
-  return Linking.createURL(`invite/${token}`);
+  return Linking.createURL(`invite/${token}`, { isTripleSlashed: true });
 }
 
 /** Extracts the invite token from a scanned QR value or opened deep link, or

@@ -31,10 +31,20 @@ export function AcceptInviteScreen({ route }: Props) {
     setAcceptError(null);
     try {
       const friendship = await acceptInvite.mutateAsync(token);
+      // The accept itself has already succeeded server-side at this point
+      // (friendship created, token consumed) — a failure hydrating the
+      // friend's profile below shouldn't be reported as "could not accept
+      // this invite" (which would be actively misleading: retrying would
+      // just fail on the now-used token) or block leaving this screen.
       const friendId =
         friendship.user_a_id === me?.id ? friendship.user_b_id : friendship.user_a_id;
-      const friend = await getUser(friendId);
-      upsertFriend(friend);
+      try {
+        const friend = await getUser(friendId);
+        upsertFriend(friend);
+      } catch {
+        // FriendsContext will still pick them up later via the feed's
+        // best-effort actor discovery.
+      }
       navigation.popToTop();
     } catch (e) {
       setAcceptError(e instanceof ApiError ? e.message : 'Could not accept this invite.');

@@ -27,13 +27,6 @@ export const createUser = (input: CreateUserInput) =>
 
 export const getUser = (id: UUID) => apiFetch<User>(`/users/${id}`);
 
-export const getUserByHandle = (handle: string) =>
-  apiFetch<User>(`/users/by-handle/${encodeURIComponent(handle)}`);
-
-/** Friends the other person by handle; the caller is implied by the auth token. */
-export const createFriendship = (userHandle: string) =>
-  apiFetch<Friendship>('/friendships', { method: 'POST', body: { user_handle: userHandle } });
-
 /** Creates a new invite token for the caller (share as a QR code or link). */
 export const createInvite = () => apiFetch<Invite>('/invites', { method: 'POST' });
 

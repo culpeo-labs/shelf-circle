@@ -101,17 +101,6 @@ export function useResolveManualBook() {
   });
 }
 
-export function useCreateFriendship() {
-  const queryClient = useQueryClient();
-  const { user } = useAuth();
-  return useMutation({
-    mutationFn: (userHandle: string) => api.createFriendship(userHandle),
-    onSuccess: () => {
-      if (user) void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
-    },
-  });
-}
-
 export function useCreateRecommendation() {
   return useMutation({
     mutationFn: (input: CreateRecommendationInput) => api.createRecommendation(input),
