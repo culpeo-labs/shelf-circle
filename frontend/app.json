@@ -1,15 +1,20 @@
 {
   "expo": {
     "name": "Shelf Circle",
-    "slug": "frontend",
+    "slug": "shelf-circle",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.shelfcircle.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.shelfcircle.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -24,6 +29,12 @@
     "plugins": [
       "expo-secure-store",
       "expo-image"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3a15d1a8-fa2a-4d72-b8f2-a149ce95626f"
+      }
+    },
+    "owner": "culpeo-labs"
   }
 }
