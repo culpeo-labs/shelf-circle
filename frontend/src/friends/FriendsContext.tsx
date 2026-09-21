@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import type { UUID } from '../api/types';
 
@@ -44,18 +44,29 @@ export function FriendsProvider({ children }: { children: React.ReactNode }) {
     void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(byId));
   }, [byId, loaded]);
 
+  // Stable regardless of `byId` — both only ever use the functional setState
+  // updater form, so callers (e.g. an effect's dependency array) can depend
+  // on them without refiring every time a friend is added.
+  const upsertFriend = useCallback((friend: FriendSummary) => {
+    setById((prev) => ({ ...prev, [friend.id]: friend }));
+  }, []);
+
+  const upsertFriends = useCallback((friends: FriendSummary[]) => {
+    setById((prev) => {
+      const next = { ...prev };
+      for (const f of friends) next[f.id] = f;
+      return next;
+    });
+  }, []);
+
+  const friends = useMemo(
+    () => Object.values(byId).sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    [byId],
+  );
+
   const value = useMemo<FriendsContextValue>(
-    () => ({
-      friends: Object.values(byId).sort((a, b) => a.display_name.localeCompare(b.display_name)),
-      upsertFriend: (friend) => setById((prev) => ({ ...prev, [friend.id]: friend })),
-      upsertFriends: (friends) =>
-        setById((prev) => {
-          const next = { ...prev };
-          for (const f of friends) next[f.id] = f;
-          return next;
-        }),
-    }),
-    [byId]
+    () => ({ friends, upsertFriend, upsertFriends }),
+    [friends, upsertFriend, upsertFriends],
   );
 
   return <FriendsContext.Provider value={value}>{children}</FriendsContext.Provider>;

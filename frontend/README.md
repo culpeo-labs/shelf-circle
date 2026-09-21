@@ -54,7 +54,7 @@ See `scripts/generate-app-icons.mjs` for the sizes/modes it produces and its
 Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/projects/shelf-circle).
 `eas.json` has three profiles:
 
-- **development** / **preview** — installable Android APK + iOS *simulator*
+- **development** / **preview** — installable Android APK + iOS _simulator_
   build (no Apple Developer account needed). `preview` is what CI builds on
   every push to `main` (`.github/workflows/frontend-build.yml`, via
   `eas build --profile preview --platform all --no-wait` — fire-and-forget;

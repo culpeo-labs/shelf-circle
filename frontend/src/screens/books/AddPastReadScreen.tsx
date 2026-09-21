@@ -39,7 +39,9 @@ export function AddPastReadScreen() {
   }
 
   if (manual) {
-    return <ManualEntryForm onResolved={goToFinish} onCancel={() => setManual(false)} busy={resolving} />;
+    return (
+      <ManualEntryForm onResolved={goToFinish} onCancel={() => setManual(false)} busy={resolving} />
+    );
   }
 
   return (
@@ -101,17 +103,33 @@ function ManualEntryForm({
   const disabled = busy || submitting || title.trim().length === 0;
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <ScrollView contentContainerStyle={styles.form} keyboardShouldPersistTaps="handled">
         <Field label="Title" value={title} onChangeText={setTitle} required />
         <Field label="Author" value={author} onChangeText={setAuthor} />
-        <Field label="Language (BCP-47)" value={language} onChangeText={setLanguage} autoCapitalize="none" />
+        <Field
+          label="Language (BCP-47)"
+          value={language}
+          onChangeText={setLanguage}
+          autoCapitalize="none"
+        />
         <Field label="Publisher" value={publisher} onChangeText={setPublisher} />
         <Field label="ISBN-13" value={isbn13} onChangeText={setIsbn13} autoCapitalize="none" />
         <Field label="ISBN-10" value={isbn10} onChangeText={setIsbn10} autoCapitalize="none" />
 
-        <Pressable style={[styles.button, disabled && styles.buttonDisabled]} onPress={submit} disabled={disabled}>
-          {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Continue</Text>}
+        <Pressable
+          style={[styles.button, disabled && styles.buttonDisabled]}
+          onPress={submit}
+          disabled={disabled}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Continue</Text>
+          )}
         </Pressable>
         <Pressable onPress={onCancel} disabled={submitting}>
           <Text style={styles.manualLinkText}>Back to search</Text>

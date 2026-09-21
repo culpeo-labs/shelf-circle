@@ -8,11 +8,7 @@
 export type UUID = string;
 export type Timestamp = string; // RFC 3339 UTC
 
-export type ReadingStatus =
-  | 'want_to_read'
-  | 'currently_reading'
-  | 'finished'
-  | 'did_not_finish';
+export type ReadingStatus = 'want_to_read' | 'currently_reading' | 'finished' | 'did_not_finish';
 
 export interface User {
   id: UUID;

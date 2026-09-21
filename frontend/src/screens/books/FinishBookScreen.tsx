@@ -29,7 +29,9 @@ export function FinishBookScreen({ route, navigation }: Props) {
           style={[styles.toggleOption, status === 'finished' && styles.toggleOptionActive]}
           onPress={() => setStatus('finished')}
         >
-          <Text style={[styles.toggleText, status === 'finished' && styles.toggleTextActive]}>Finished</Text>
+          <Text style={[styles.toggleText, status === 'finished' && styles.toggleTextActive]}>
+            Finished
+          </Text>
         </Pressable>
         <Pressable
           style={[styles.toggleOption, status === 'did_not_finish' && styles.toggleOptionActive]}
@@ -51,7 +53,11 @@ export function FinishBookScreen({ route, navigation }: Props) {
         onPress={submit}
         disabled={setBookStatus.isPending}
       >
-        {setBookStatus.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save</Text>}
+        {setBookStatus.isPending ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Save</Text>
+        )}
       </Pressable>
 
       {setBookStatus.isError && <Text style={styles.error}>Could not save — try again.</Text>}
@@ -68,7 +74,12 @@ const styles = StyleSheet.create({
   toggleTextActive: { color: '#2b2a26', fontWeight: '700' },
   ratingBlock: { alignItems: 'center', gap: 10 },
   label: { fontSize: 13, fontWeight: '600', color: '#6b6456' },
-  button: { backgroundColor: '#3b6e5e', borderRadius: 8, paddingVertical: 14, alignItems: 'center' },
+  button: {
+    backgroundColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   error: { color: '#b3432b', textAlign: 'center' },

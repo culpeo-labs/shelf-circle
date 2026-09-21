@@ -26,7 +26,9 @@ export function MainTabs() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        tabBarIcon: () => <Text style={{ fontSize: 20 }}>{ICONS[route.name as keyof MainTabParamList]}</Text>,
+        tabBarIcon: () => (
+          <Text style={{ fontSize: 20 }}>{ICONS[route.name as keyof MainTabParamList]}</Text>
+        ),
         tabBarActiveTintColor: '#3b6e5e',
       })}
     >
