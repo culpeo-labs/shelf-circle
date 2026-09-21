@@ -55,6 +55,19 @@ async fn set_status(
 ) -> ApiResult<Json<BookStatus>> {
     let rating = resolve_rating(input.status, input.rating)?;
 
+    let mut tx = pool.begin().await?;
+
+    if input.backdated {
+        // Not a bind parameter: `SET` doesn't take query parameters, and
+        // the value here is a fixed literal, not user input, so there's
+        // nothing to inject. `SET LOCAL` is transaction-scoped, so this
+        // can't leak into another request's use of the same pooled
+        // connection once this transaction commits below.
+        sqlx::query("set local shelf_circle.suppress_activity = 'true'")
+            .execute(&mut *tx)
+            .await?;
+    }
+
     let status = sqlx::query_as::<_, BookStatus>(
         r#"
         insert into book_statuses (user_id, book_id, status, progress_percent, rating)
@@ -72,8 +85,10 @@ async fn set_status(
     .bind(input.status)
     .bind(input.progress_percent)
     .bind(rating)
-    .fetch_one(&pool)
+    .fetch_one(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(Json(status))
 }

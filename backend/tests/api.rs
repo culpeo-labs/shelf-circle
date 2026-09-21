@@ -413,6 +413,82 @@ async fn book_status_rating_rules_and_upsert() {
     assert_eq!(list.as_array().unwrap().len(), 1);
 }
 
+/// `backdated: true` (logging a book read before the user had the app) must
+/// suppress the feed event a status change normally generates; the book
+/// still lands on the right shelf either way.
+#[tokio::test]
+async fn book_status_backdated_suppresses_feed_event_but_not_the_shelf() {
+    let app = TestApp::new().await;
+    let (token, user_id) = onboard(&app, "hanko|a", "alice").await;
+
+    let backlog_book = resolve_book(&app, &token, "OL-backlog").await;
+    let (status, backlog) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": backlog_book, "status": "finished", "rating": 4, "backdated": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {backlog}");
+
+    let (status, feed) = send(
+        &app.router,
+        get_request(&format!("/users/{user_id}/feed"), Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        feed.as_array().unwrap().len(),
+        0,
+        "a backdated status change must not appear in the feed"
+    );
+
+    let (status, library) = send(
+        &app.router,
+        get_request(
+            &format!("/users/{user_id}/library?shelf=read"),
+            Some(&token),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        library.as_array().unwrap().len(),
+        1,
+        "the book still lands on the Read shelf even though it's backdated"
+    );
+
+    // Regression check: an ordinary (non-backdated) status change on a
+    // *different* book still produces a feed event as before.
+    let normal_book = resolve_book(&app, &token, "OL-normal").await;
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": normal_book, "status": "finished" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, feed) = send(
+        &app.router,
+        get_request(&format!("/users/{user_id}/feed"), Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        feed.as_array().unwrap().len(),
+        1,
+        "a normal status change should still appear in the feed"
+    );
+}
+
 #[tokio::test]
 async fn library_shelves_filter_and_validate() {
     let app = TestApp::new().await;

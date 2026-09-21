@@ -96,6 +96,12 @@ pub struct SetBookStatus {
     /// 1-5. Allowed only with `finished` / `did_not_finish`; cleared on any
     /// other status.
     pub rating: Option<i16>,
+    /// True for logging a book read before the user had the app — suppresses
+    /// the activity_events row / feed entry this status change would
+    /// otherwise generate. Defaults to false (omitting it is the normal
+    /// "I just did this" path).
+    #[serde(default)]
+    pub backdated: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
