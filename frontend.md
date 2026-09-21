@@ -344,6 +344,16 @@ React Query cache invalidation after a mutation.
     `source_id: "manual:" + uuidv4()`, other external ids `null`.
   - Then Finish sheet → `PUT /book-statuses` `finished` (+ optional rating).
 - After: invalidate `library?shelf=read`, `feed`.
+- **Superseded:** a backlogged read showing up in the feed (as originally
+  specced above) turned out to be the wrong default — friends would see
+  "just finished Dune" for a book read years before joining. The Finish
+  sheet reached via AddPastRead now sends `PUT /book-statuses` with
+  `backdated: true`, which the backend (`0007` migration) uses to suppress
+  the `activity_events` row this write would otherwise create. The book
+  still lands on the Read shelf as before; only the feed entry is
+  suppressed. "Mark finished" reached from BookDetail/My Books (a real,
+  present-tense action) is unaffected — `backdated` is only ever `true`
+  when the Finish sheet was reached from AddPastRead.
 
 ### 6.5 Finish sheet (shared component)
 

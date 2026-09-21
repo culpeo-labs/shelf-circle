@@ -10,13 +10,13 @@ type Props = NativeStackScreenProps<RootStackParamList, 'FinishBook'>;
 type FinishStatus = 'finished' | 'did_not_finish';
 
 export function FinishBookScreen({ route, navigation }: Props) {
-  const { bookId, initialStatus } = route.params;
+  const { bookId, initialStatus, backdated } = route.params;
   const [status, setStatus] = useState<FinishStatus>(initialStatus ?? 'finished');
   const [rating, setRating] = useState<number | null>(null);
   const setBookStatus = useSetBookStatus();
 
   async function submit() {
-    await setBookStatus.mutateAsync({ book_id: bookId, status, rating });
+    await setBookStatus.mutateAsync({ book_id: bookId, status, rating, backdated });
     navigation.popToTop();
     // popToTop lands on Main; MyBooks/BookDetail queries are already
     // invalidated by useSetBookStatus, so the Read shelf reflects this on next view.
@@ -24,6 +24,10 @@ export function FinishBookScreen({ route, navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      {backdated && (
+        <Text style={styles.backdatedNote}>This won't show up in your friends' timeline.</Text>
+      )}
+
       <View style={styles.toggle}>
         <Pressable
           style={[styles.toggleOption, status === 'finished' && styles.toggleOptionActive]}
@@ -67,6 +71,7 @@ export function FinishBookScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, gap: 24 },
+  backdatedNote: { fontSize: 13, color: '#6b6456', textAlign: 'center', marginBottom: -8 },
   toggle: { flexDirection: 'row', backgroundColor: '#efeae0', borderRadius: 8, padding: 3 },
   toggleOption: { flex: 1, paddingVertical: 10, borderRadius: 6, alignItems: 'center' },
   toggleOptionActive: { backgroundColor: '#fff' },

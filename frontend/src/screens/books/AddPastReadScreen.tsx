@@ -24,7 +24,7 @@ export function AddPastReadScreen() {
   const [resolving, setResolving] = useState(false);
 
   async function goToFinish(bookId: string) {
-    navigation.replace('FinishBook', { bookId, initialStatus: 'finished' });
+    navigation.replace('FinishBook', { bookId, initialStatus: 'finished', backdated: true });
   }
 
   async function onSelect(result: { source: string; source_id: string }) {

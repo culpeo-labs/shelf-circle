@@ -45,7 +45,13 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   (timeline log + trigger), `0003_ratings.sql` (`book_statuses.rating`),
   `0004_auth.sql` (`users.hanko_user_id` + `users.email`), `0005_invites.sql`
   (`invite_tokens` — QR/link friend-adding, see friends.md), `0006_...sql`
-  (drops a redundant index `0005` accidentally duplicated). UUID default is
+  (drops a redundant index `0005` accidentally duplicated), `0007_...sql`
+  (redefines the `book_statuses` activity trigger to skip inserting an
+  `activity_events` row when the request set `SET LOCAL
+  shelf_circle.suppress_activity = 'true'` — see **Timeline / feed** below),
+  `0008_...sql` (adds `book_statuses.backdated boolean not null default
+  false` — persists the same flag on the row itself, for a "logged as
+  backlog" badge; see **Timeline / feed**). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -122,6 +128,21 @@ but has no routes yet.
   `book_statuses` insert/update) — fires only when `status` actually changes, so
   progress-only updates don't spam. The app write path (`statuses.rs`) does not
   touch it. `0002` backfills from existing `book_statuses` using `updated_at`.
+- **Backlog reads (logged from before the user had the app) skip this.**
+  `PUT /book-statuses` with `backdated: true` wraps the upsert in a
+  transaction and runs `set local shelf_circle.suppress_activity = 'true'`
+  first (see `0007`); the trigger checks that setting and no-ops instead of
+  inserting. `SET LOCAL` resets at commit/rollback, so it can't leak onto a
+  later request that reuses the same pooled connection. The book still lands
+  on the right shelf either way — only the feed entry is suppressed.
+  `book_statuses.backdated` (`0008`) separately persists the same flag on
+  the row for a "logged as backlog" badge — distinct from the transient
+  `SET LOCAL` above (which only controls the trigger for one write).
+  `set_status`'s upsert clears it automatically the next time the status
+  actually changes (a real reread), via a `case` comparing the incoming
+  status against the row's *current* one, but leaves it alone when a write
+  re-submits the same status (e.g. only the rating changed) — nothing about
+  "when did this status take effect" changed in that case.
 - `GET /users/{id}/feed` — friends **+ self**, newest first, keyset page via
   `?before=<rfc3339>&limit=`. Filters on `created_at` only (no id tiebreak yet).
 - `feed.rs` / `library.rs` fetch a flat `*Row` struct (aliased columns) then map
