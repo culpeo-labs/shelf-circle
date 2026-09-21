@@ -103,6 +103,9 @@ export interface SetBookStatusInput {
   status: ReadingStatus;
   progress_percent?: number | null;
   rating?: number | null;
+  /** True for a book read before using the app — suppresses the feed entry
+   * this status change would otherwise generate. Defaults to false. */
+  backdated?: boolean;
 }
 
 export interface LibraryEntry {

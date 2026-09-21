@@ -15,6 +15,9 @@ export type RootStackParamList = {
   FinishBook: {
     bookId: string;
     initialStatus?: Extract<ReadingStatus, 'finished' | 'did_not_finish'>;
+    /** True when reached from AddPastRead — logging a book read before
+     * using the app, which shouldn't show up in the timeline. */
+    backdated?: boolean;
   };
   RecommendToFriend: { bookId: string };
   AddFriend: undefined;
