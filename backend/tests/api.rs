@@ -661,3 +661,99 @@ async fn invites_full_flow() {
         "used invite no longer previews"
     );
 }
+
+/// The self-accept rejection happens *after* the token is atomically claimed
+/// (see accept_invite's doc comment) — this proves the claim rolls back
+/// rather than permanently burning the token on that rejected attempt.
+#[tokio::test]
+async fn invites_self_accept_does_not_burn_the_token() {
+    let app = TestApp::new().await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let (status, invite) = send(
+        &app.router,
+        json_request("POST", "/invites", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let token = invite["token"].as_str().unwrap().to_string();
+
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_a),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_b),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "Alice's rejected self-accept must not have burned the token"
+    );
+}
+
+/// A single-use token accepted by two different people at nearly the same
+/// moment must let exactly one of them win — the earlier check-then-act
+/// version (separate select, insert, then an unconditionally-succeeding
+/// update) let both through, since neither request's update was guarded by
+/// `used_at is null`.
+#[tokio::test]
+async fn invites_accept_is_race_safe() {
+    let app = TestApp::new().await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, _id_c) = onboard(&app, "hanko|c", "carol").await;
+
+    let (status, invite) = send(
+        &app.router,
+        json_request("POST", "/invites", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let token = invite["token"].as_str().unwrap().to_string();
+
+    let accept_b = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_b),
+            json!({}),
+        ),
+    );
+    let accept_c = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(&token_c),
+            json!({}),
+        ),
+    );
+    let ((status_b, body_b), (status_c, body_c)) = tokio::join!(accept_b, accept_c);
+
+    let successes = [status_b, status_c]
+        .iter()
+        .filter(|s| **s == StatusCode::OK)
+        .count();
+    assert_eq!(
+        successes, 1,
+        "exactly one concurrent accept should win: bob={status_b} ({body_b}), carol={status_c} ({body_c})"
+    );
+}

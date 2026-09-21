@@ -35,12 +35,17 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   (`search`, `resolve`) + `BookSearchResult` + `normalize_language`;
   `open_library.rs` (always on, no key); `google_books.rs` (only when
   `GOOGLE_BOOKS_API_KEY` set — keyless = HTTP 429). Uses `reqwest`.
-- `src/routes/` — one module per resource (`me`, `users`, `friendships`, `books`,
-  `statuses`, `recommendations`, `feed`, `library`), each exposing a `router()`;
-  wired in `routes/mod.rs`. Each file self-contains its response structs.
+- `src/routes/` — one module per resource (`me`, `users`, `friendships`,
+  `invites`, `books`, `statuses`, `recommendations`, `feed`, `library`), each
+  exposing a `router()`; wired in `routes/mod.rs`. Each file self-contains its
+  response structs. `friendships::upsert_friendship` (the canonicalized
+  insert-or-noop) is `pub` and shared with `invites::accept_invite` — don't
+  reimplement it a third time.
 - `migrations/` — `0001_init.sql` (v1 schema), `0002_activity_events.sql`
   (timeline log + trigger), `0003_ratings.sql` (`book_statuses.rating`),
-  `0004_auth.sql` (`users.hanko_user_id` + `users.email`). UUID default is
+  `0004_auth.sql` (`users.hanko_user_id` + `users.email`), `0005_invites.sql`
+  (`invite_tokens` — QR/link friend-adding, see friends.md), `0006_...sql`
+  (drops a redundant index `0005` accidentally duplicated). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -80,8 +85,11 @@ users (with `hanko_user_id` unique + `email`, both from the JWT), mutual
 friendships (canonicalized `user_a_id < user_b_id`), canonical `books` with
 multi-language `book_editions`, per-user `book_statuses` (want_to_read /
 currently_reading / finished / did_not_finish, plus optional `rating` 1-5),
-`recommendations` (the "X recommended a book to you" inbox), and `activity_events`
-(append-only timeline log). `reactions` table exists but has no routes yet.
+`recommendations` (the "X recommended a book to you" inbox), `activity_events`
+(append-only timeline log), and `invite_tokens` (single-use, 7-day-lived
+tokens backing QR-code/deep-link friend adding — `created_by_user_id`,
+`used_at`/`used_by_user_id` nullable until redeemed). `reactions` table exists
+but has no routes yet.
 
 ### Auth
 
