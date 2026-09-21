@@ -86,6 +86,12 @@ export function BookDetailScreen({ route }: Props) {
           ))}
         </View>
 
+        {myStatus?.backdated && (
+          <Text style={styles.backdatedBadge}>
+            Logged from backlog · not shown in your friends' timeline
+          </Text>
+        )}
+
         {myStatus?.status === 'currently_reading' && (
           <View style={styles.progressBlock}>
             <Text style={styles.progressLabel}>{Math.round(progress)}% done</Text>
@@ -154,6 +160,7 @@ const styles = StyleSheet.create({
   shelfOptionActive: { backgroundColor: '#3b6e5e', borderColor: '#3b6e5e' },
   shelfText: { color: '#2b2a26', fontSize: 13, fontWeight: '500' },
   shelfTextActive: { color: '#fff' },
+  backdatedBadge: { fontSize: 12, color: '#6b6456', marginTop: 8 },
   progressBlock: { marginTop: 8, gap: 6 },
   progressLabel: { fontSize: 13, color: '#6b6456' },
   recommendButton: {

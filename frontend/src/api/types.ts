@@ -95,6 +95,10 @@ export interface BookStatus {
   rating: number | null;
   updated_at: Timestamp;
   created_at: Timestamp;
+  /** True while this row's *current* status is the one that was logged via
+   * the backlog flow — cleared server-side the next time the status
+   * actually changes (a real reread). */
+  backdated: boolean;
 }
 
 /** PUT /book-statuses body — the acting user comes from the auth token. */
