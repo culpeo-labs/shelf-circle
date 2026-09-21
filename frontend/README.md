@@ -39,8 +39,11 @@ link that switches to Hanko's registration flow. After verifying, a one-time
 `../assets/logo.svg` (repo root) is the source of truth for the logo — it's
 shared across whatever else in the repo eventually needs it, not just this
 app. This app's icons (`assets/icon.png`, `splash-icon.png`, `favicon.png`,
-the `android-icon-*.png` adaptive-icon layers) are generated from it; don't
-hand-edit them. After changing the SVG, regenerate with:
+the `android-icon-*.png` adaptive-icon layers) **and** the repo root's
+`assets/social-preview.png` (GitHub's social-preview image — re-upload it
+manually at Settings → General → Social preview after regenerating; there's
+no API for that part) are generated from it; don't hand-edit any of them.
+After changing the SVG, regenerate with:
 
 ```
 npm run generate:icons

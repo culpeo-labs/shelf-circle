@@ -51,17 +51,40 @@ function hexToRgba(hex) {
 
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 };
 
-// `padding` is the fraction of each edge left empty around the logo.
+// `padding` is the fraction of the shorter edge left empty around the logo.
 // Android adaptive-icon layers (foreground/monochrome) need a much bigger
 // margin — the OS crops to a mask (circle, squircle, teardrop, ...) and only
 // guarantees the inner ~66% survives every shape.
+//
+// `outDir` overrides the default (frontend/assets) for targets that belong
+// elsewhere, e.g. the repo-root social preview banner.
 const TARGETS = [
-  { file: 'icon.png', size: 1024, mode: 'pad', padding: 0.02 },
-  { file: 'splash-icon.png', size: 1024, mode: 'pad-transparent', padding: 0.08 },
-  { file: 'favicon.png', size: 48, mode: 'pad', padding: 0.02 },
-  { file: 'android-icon-foreground.png', size: 512, mode: 'pad-transparent', padding: 0.17 },
-  { file: 'android-icon-monochrome.png', size: 432, mode: 'monochrome', padding: 0.17 },
-  { file: 'android-icon-background.png', size: 512, mode: 'solid' },
+  { file: 'icon.png', width: 1024, height: 1024, mode: 'pad', padding: 0.02 },
+  { file: 'splash-icon.png', width: 1024, height: 1024, mode: 'pad-transparent', padding: 0.08 },
+  { file: 'favicon.png', width: 48, height: 48, mode: 'pad', padding: 0.02 },
+  {
+    file: 'android-icon-foreground.png',
+    width: 512,
+    height: 512,
+    mode: 'pad-transparent',
+    padding: 0.17,
+  },
+  {
+    file: 'android-icon-monochrome.png',
+    width: 432,
+    height: 432,
+    mode: 'monochrome',
+    padding: 0.17,
+  },
+  { file: 'android-icon-background.png', width: 512, height: 512, mode: 'solid' },
+  {
+    file: 'social-preview.png',
+    width: 1280,
+    height: 640,
+    mode: 'pad',
+    padding: 0.12,
+    outDir: path.join(repoRoot, 'assets'),
+  },
 ];
 
 /**
@@ -107,43 +130,31 @@ async function main() {
   const backgroundRgba = hexToRgba(args.background);
   const svgBuffer = await readFile(args.source);
   const trimmedLogo = await loadTrimmedLogo(svgBuffer);
-  await mkdir(args.outDir, { recursive: true });
 
   for (const target of TARGETS) {
-    const outPath = path.join(args.outDir, target.file);
+    const outDir = target.outDir ?? args.outDir;
+    await mkdir(outDir, { recursive: true });
+    const outPath = path.join(outDir, target.file);
+    const { width, height } = target;
 
     if (target.mode === 'solid') {
-      await sharp({
-        create: {
-          width: target.size,
-          height: target.size,
-          channels: 4,
-          background: backgroundRgba,
-        },
-      })
+      await sharp({ create: { width, height, channels: 4, background: backgroundRgba } })
         .png()
         .toFile(outPath);
-      console.log(`wrote ${target.file} (${target.size}x${target.size}, solid ${args.background})`);
+      console.log(`wrote ${target.file} (${width}x${height}, solid ${args.background})`);
       continue;
     }
 
-    const contentSize = Math.round(target.size * (1 - target.padding * 2));
+    const contentSize = Math.round(Math.min(width, height) * (1 - target.padding * 2));
     let logo = await renderLogo(trimmedLogo, contentSize);
     if (target.mode === 'monochrome') logo = await toMonochrome(logo);
 
     const canvasBackground = target.mode === 'pad' ? backgroundRgba : TRANSPARENT;
-    await sharp({
-      create: {
-        width: target.size,
-        height: target.size,
-        channels: 4,
-        background: canvasBackground,
-      },
-    })
+    await sharp({ create: { width, height, channels: 4, background: canvasBackground } })
       .composite([{ input: logo, gravity: 'center' }])
       .png()
       .toFile(outPath);
-    console.log(`wrote ${target.file} (${target.size}x${target.size})`);
+    console.log(`wrote ${target.file} (${width}x${height})`);
   }
 }
 
