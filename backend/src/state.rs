@@ -4,6 +4,7 @@ use axum::extract::FromRef;
 use sqlx::PgPool;
 
 use crate::auth::HankoAuth;
+use crate::catalogs::Catalogs;
 use crate::providers::BookProviders;
 use crate::storage::AvatarStorage;
 
@@ -19,6 +20,7 @@ pub struct AppState {
     pub auth: Arc<HankoAuth>,
     /// `None` when Azure Blob Storage isn't configured (avatar upload → 503).
     pub storage: Option<Arc<AvatarStorage>>,
+    pub catalogs: Arc<Catalogs>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -42,5 +44,11 @@ impl FromRef<AppState> for Arc<HankoAuth> {
 impl FromRef<AppState> for Option<Arc<AvatarStorage>> {
     fn from_ref(state: &AppState) -> Self {
         state.storage.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<Catalogs> {
+    fn from_ref(state: &AppState) -> Self {
+        state.catalogs.clone()
     }
 }

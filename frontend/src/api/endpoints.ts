@@ -2,6 +2,7 @@ import { apiFetch } from './client';
 import type {
   AvatarUploadTicket,
   Book,
+  BookLibraryLink,
   BookSearchResult,
   BookStatus,
   BookWithEdition,
@@ -11,7 +12,9 @@ import type {
   Invite,
   InvitePreview,
   LibraryEntry,
+  LibrarySystem,
   LibraryShelf,
+  MyLibrarySystem,
   FeedItem,
   Recommendation,
   ResolvedBookInput,
@@ -81,3 +84,18 @@ export const getRecommendationsInbox = (userId: UUID) =>
 
 export const getFeed = (userId: UUID, opts: { limit?: number; before?: string } = {}) =>
   apiFetch<FeedItem[]>(`/users/${userId}/feed`, { query: opts });
+
+export const listLibrarySystems = () => apiFetch<LibrarySystem[]>('/library-systems');
+
+export const getMyLibrarySystem = () => apiFetch<MyLibrarySystem>('/me/library-system');
+
+/** `null` clears the choice. */
+export const setMyLibrarySystem = (id: string | null) =>
+  apiFetch<MyLibrarySystem>('/me/library-system', {
+    method: 'PUT',
+    body: { library_system: id },
+  });
+
+/** Needs a library chosen first (400 otherwise). */
+export const getBookLibraryLink = (bookId: UUID) =>
+  apiFetch<BookLibraryLink>(`/books/${bookId}/library-link`);

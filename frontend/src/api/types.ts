@@ -29,6 +29,26 @@ export interface UpdateMeInput {
   avatar_url?: string | null;
 }
 
+export interface LibrarySystem {
+  id: string;
+  name: string;
+}
+
+/** GET/PUT /me/library-system */
+export interface MyLibrarySystem {
+  library_system: LibrarySystem | null;
+}
+
+/** GET /books/{id}/library-link — `url` is always usable. */
+export interface BookLibraryLink {
+  library: LibrarySystem;
+  /** The catalog has this edition; `url` is its record page. Otherwise `url` is a catalog search. */
+  found: boolean;
+  /** The catalog couldn't be reached, so `found: false` means "unknown". */
+  lookup_failed: boolean;
+  url: string;
+}
+
 /** POST /me/avatar-upload — PUT the JPEG to `upload_url`, then PATCH `avatar_url`. */
 export interface AvatarUploadTicket {
   upload_url: string;

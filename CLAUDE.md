@@ -27,6 +27,11 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   Sub-routers are `Router<AppState>`.
 - `src/auth.rs` — Hanko JWT verification + the `AuthClaims` / `CurrentUser`
   extractors + `ensure_self`. See **Auth** below.
+- `src/catalogs/` — "get it at your library" plugins. `mod.rs` = the
+  `SYSTEMS` registry (`LibrarySystem { id, name, kind }`: Seattle Public
+  Library `seattle`, King County `kcls`), `Catalogs` (ISBN lookup with a 1h
+  in-process cache) and `search_url`; `biblio_commons.rs` = the only `Kind`
+  so far. See **Library catalogs**.
 - `src/storage.rs` — `AvatarStorage`: Azure Blob avatar uploads. Mints a
   10-minute, write-only (`sp=cw`) SAS URL for `<user-uuid>/<random-uuid>.jpg`,
   HMAC-signed with the storage account key (no Azure SDK); `owns_avatar_url`
@@ -65,7 +70,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   `0008_...sql` (adds `book_statuses.backdated boolean not null default
   false` — persists the same flag on the row itself, for a "logged as
   backlog" badge; see **Timeline / feed**), `0009_share_shelves.sql`
-  (`users.share_shelves boolean not null default false`). UUID default is
+  (`users.share_shelves boolean not null default false`), `0010_library_system.sql`
+  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -175,6 +181,29 @@ but has no routes yet.
 - `feed.rs` / `library.rs` fetch a flat `*Row` struct (aliased columns) then map
   to nested response structs; they don't use `#[sqlx(flatten)]`.
 
+### Library catalogs
+
+- User picks a library system (`GET /library-systems`, `GET|PUT
+  /me/library-system`); `GET /books/{id}/library-link` then returns
+  `{library, found, lookup_failed, url}`: `url` is the catalog **record page**
+  when a search of the catalog by the book's ISBNs (ISBN-13s first, max 4)
+  finds an edition carrying that ISBN, else a **title+author catalog search**.
+  Always 200 with a usable `url` — a slow/down catalog only sets
+  `lookup_failed` (400 only if no library is chosen). Named `library_systems`
+  in code to avoid confusion with `routes/library.rs` (a user's bookshelves).
+- **Adding a library** on an existing kind = one `SYSTEMS` entry (id is stored
+  on users — never rename). **New kind of catalog** (Libby/OverDrive, Sierra…)
+  = a module in `catalogs/`, a `Kind` variant, and an arm in
+  `Catalogs::lookup_isbn` / `search_url`; each kind only answers "record URL
+  for this ISBN".
+- BiblioCommons plugin: `GET {gateway}/v2/libraries/{slug}/bibs/search?query=<isbn>
+  &searchType=smart` (unauthenticated, **unofficial** — the endpoint the
+  libraries' own sites use; verified live for `seattle` and `kcls`), record link
+  `https://{host}/v2/record/{bib id}`. Note `slug` is the library's BiblioCommons
+  id, not necessarily the obvious one (`spl` is a Canadian library; Seattle is
+  `seattle`). Tests point it at a wiremock via
+  `Catalogs::with_biblio_commons_gateway`.
+
 ### Ratings
 
 - `book_statuses.rating smallint`, 1-5, DB CHECK: null unless status is
@@ -205,7 +234,7 @@ but has no routes yet.
 
 Provider-response cache. Edition-level search granularity. Feed keyset id
 tiebreak; feed covers reading-status events only (no recommendation/friendship
-events). Live library availability (the app only deep-links to the library's catalog search — `frontend/src/utils/library.ts`, hardcoded to Seattle Public Library; BiblioCommons' unauthenticated gateway API does expose available/total/holds counts if we ever want it), affiliate links, reactions/comments routes. Auth
+events). Live library availability (holdings/wait times — the gateway's bib `availability` has available/total/holds counts, but we only link to the record today; see **Library catalogs**), affiliate links, reactions/comments routes. Auth
 hardening (JWT `iss` check, friend-graph checks such as "recommend to friends
 only", rate limiting). VNet integration for Postgres (currently the "allow all
 Azure services" firewall rule).

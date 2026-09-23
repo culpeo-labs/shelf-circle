@@ -56,6 +56,42 @@ export function useUpdateMe() {
   });
 }
 
+export function useLibrarySystems() {
+  return useQuery({ queryKey: ['library-systems'], queryFn: api.listLibrarySystems });
+}
+
+export function useMyLibrarySystem() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['my-library-system', user?.id],
+    queryFn: api.getMyLibrarySystem,
+    enabled: !!user,
+  });
+}
+
+export function useSetMyLibrarySystem() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: (id: string | null) => api.setMyLibrarySystem(id),
+    onSuccess: (mine) => {
+      queryClient.setQueryData(['my-library-system', user?.id], mine);
+      // Links are per-library.
+      void queryClient.invalidateQueries({ queryKey: ['book-library-link'] });
+    },
+  });
+}
+
+/** The book's page in the user's library catalog. Only call once a library is chosen. */
+export function useBookLibraryLink(bookId: UUID | undefined, libraryId: string | undefined) {
+  return useQuery({
+    queryKey: ['book-library-link', libraryId, bookId],
+    queryFn: () => api.getBookLibraryLink(bookId!),
+    enabled: !!bookId && !!libraryId,
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
 export function useBookStatuses() {
   const { user } = useAuth();
   return useQuery({
