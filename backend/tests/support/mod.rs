@@ -197,6 +197,15 @@ impl TestApp {
             pool: db.pool.clone(),
             providers: std::sync::Arc::new(BookProviders::from_env()),
             auth: std::sync::Arc::new(auth),
+            storage: Some(std::sync::Arc::new(
+                shelf_circle_backend::storage::AvatarStorage::new(
+                    "testacct",
+                    "dGVzdC1rZXk=",
+                    "avatars",
+                    None,
+                )
+                .expect("test storage config"),
+            )),
         };
 
         Self {

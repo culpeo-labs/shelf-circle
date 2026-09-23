@@ -968,6 +968,76 @@ async fn library_is_visible_to_friends_only_when_shared() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// Profile editing: display name validation + trimming, and the avatar flow —
+/// mint an upload URL, then only *that* URL (own prefix) is accepted back.
+#[tokio::test]
+async fn profile_edit_display_name_and_avatar() {
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let patch = |token: &str, body: Value| json_request("PATCH", "/me", Some(token), body);
+
+    let (status, me) = send(
+        &app.router,
+        patch(&token_a, json!({ "display_name": "  Alice L.  " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {me}");
+    assert_eq!(me["display_name"], "Alice L.", "trimmed");
+    assert_eq!(me["handle"], "alice", "handle isn't editable");
+
+    for bad in ["", "   ", &"x".repeat(51)] {
+        let (status, _) = send(&app.router, patch(&token_a, json!({ "display_name": bad }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "display_name {bad:?}");
+    }
+
+    // Upload ticket: SAS URL under alice's own prefix.
+    let (status, ticket) = send(
+        &app.router,
+        json_request("POST", "/me/avatar-upload", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {ticket}");
+    let avatar_url = ticket["avatar_url"].as_str().unwrap().to_string();
+    let upload_url = ticket["upload_url"].as_str().unwrap();
+    assert!(avatar_url.contains(&format!("/avatars/{id_a}/")));
+    assert!(upload_url.starts_with(&avatar_url) && upload_url.contains("sig="));
+
+    // Arbitrary / foreign / query-suffixed URLs are refused...
+    for bad in [
+        "https://evil.example/a.jpg".to_string(),
+        upload_url.to_string(),
+    ] {
+        let (status, _) = send(&app.router, patch(&token_a, json!({ "avatar_url": bad }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    // ...including alice's blob URL submitted by bob.
+    let (status, _) = send(
+        &app.router,
+        patch(&token_b, json!({ "avatar_url": avatar_url })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "another user's prefix");
+
+    // The minted one is accepted, survives an unrelated PATCH, and null clears it.
+    let (status, me) = send(
+        &app.router,
+        patch(&token_a, json!({ "avatar_url": avatar_url })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {me}");
+    assert_eq!(me["avatar_url"], avatar_url);
+    let (_, me) = send(
+        &app.router,
+        patch(&token_a, json!({ "share_shelves": true })),
+    )
+    .await;
+    assert_eq!(me["avatar_url"], avatar_url, "absent field leaves it alone");
+    let (_, me) = send(&app.router, patch(&token_a, json!({ "avatar_url": null }))).await;
+    assert!(me["avatar_url"].is_null(), "null removes it");
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

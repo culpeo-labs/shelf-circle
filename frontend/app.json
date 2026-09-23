@@ -31,6 +31,12 @@
       "expo-secure-store",
       "expo-image",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Shelf Circle uses your photos so you can choose a profile picture."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Shelf Circle uses your camera to scan a friend's invite QR code."
