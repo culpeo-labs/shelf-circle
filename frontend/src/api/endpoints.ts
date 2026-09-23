@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import type {
+  AvatarUploadTicket,
   Book,
   BookSearchResult,
   BookStatus,
@@ -25,6 +26,9 @@ export const getMe = () => apiFetch<User>('/me');
 
 export const updateMe = (input: UpdateMeInput) =>
   apiFetch<User>('/me', { method: 'PATCH', body: input });
+
+export const createAvatarUpload = () =>
+  apiFetch<AvatarUploadTicket>('/me/avatar-upload', { method: 'POST' });
 
 export const createUser = (input: CreateUserInput) =>
   apiFetch<User>('/users', { method: 'POST', body: input });

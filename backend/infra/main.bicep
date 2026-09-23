@@ -70,6 +70,9 @@ var envName = '${namePrefix}-${environmentName}-env'
 var apiName = '${namePrefix}-${environmentName}-api'
 var pgName = toLower('${namePrefix}-${environmentName}-pg-${uniqueString(resourceGroup().id)}')
 var dbName = 'shelfcircle'
+// Storage account names: 3-24 chars, lowercase letters/digits only.
+var storageName = take(toLower('${namePrefix}${environmentName}st${uniqueString(resourceGroup().id)}'), 24)
+var avatarContainerName = 'avatars'
 
 var acrPullRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -153,6 +156,38 @@ resource pgDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08
   }
 }
 
+// Profile pictures. Blobs are named `<user-uuid>/<random-uuid>.jpg` and the
+// container allows anonymous *blob-level* read (no listing), so the app can
+// show them with a plain image URL. Uploads never go through anonymous access:
+// the API hands the app a short-lived write-only SAS signed with the account
+// key (see backend/src/storage.rs).
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    allowBlobPublicAccess: true
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource avatarContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: avatarContainerName
+  properties: {
+    publicAccess: 'Blob'
+  }
+}
+
 resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: envName
   location: location
@@ -204,6 +239,10 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             name: 'database-url'
             value: 'postgresql://${pgAdminLogin}:${pgAdminPassword}@${pg.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require'
           }
+          {
+            name: 'azure-storage-key'
+            value: storage.listKeys().keys[0].value
+          }
         ],
         empty(googleBooksApiKey)
           ? []
@@ -237,6 +276,18 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'HANKO_AUDIENCE'
                 value: hankoAudience
+              }
+              {
+                name: 'AZURE_STORAGE_ACCOUNT'
+                value: storage.name
+              }
+              {
+                name: 'AZURE_STORAGE_KEY'
+                secretRef: 'azure-storage-key'
+              }
+              {
+                name: 'AZURE_STORAGE_CONTAINER'
+                value: avatarContainerName
               }
               {
                 name: 'RUST_LOG'
@@ -293,6 +344,7 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
   }
   dependsOn: [
     acrPull
+    avatarContainer
   ]
 }
 
@@ -311,4 +363,5 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 output containerAppName string = api.name
 output containerAppFqdn string = api.properties.configuration.ingress.fqdn
+output storageAccountName string = storage.name
 output postgresFqdn string = pg.properties.fullyQualifiedDomainName

@@ -27,6 +27,17 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   Sub-routers are `Router<AppState>`.
 - `src/auth.rs` — Hanko JWT verification + the `AuthClaims` / `CurrentUser`
   extractors + `ensure_self`. See **Auth** below.
+- `src/storage.rs` — `AvatarStorage`: Azure Blob avatar uploads. Mints a
+  10-minute, write-only (`sp=cw`) SAS URL for `<user-uuid>/<random-uuid>.jpg`,
+  HMAC-signed with the storage account key (no Azure SDK); `owns_avatar_url`
+  is what `PATCH /me` uses to accept only URLs this API minted for the caller.
+  Config: `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` (+ optional
+  `AZURE_STORAGE_CONTAINER`, default `avatars`; `AZURE_STORAGE_BLOB_ENDPOINT`
+  for Azurite). Unset → `POST /me/avatar-upload` is 503 and `AppState.storage`
+  is `None`. Signing format was verified against Azurite (valid SAS → 201,
+  tampered → 403); to re-check locally: `npx azurite-blob`, create an
+  `avatars` container, and PUT to a minted URL with `x-ms-blob-type: BlockBlob`.
+  Old avatar blobs are not deleted when replaced.
 - `src/db.rs` — pool creation + migration runner.
 - `src/error.rs` — `ApiError` / `ApiResult`; maps errors to JSON responses
   (`ProviderError` → 404 / 400 / 502).
@@ -65,8 +76,10 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   replica is up, Log Analytics: `ContainerAppConsoleLogs_CL` on the app's
   managed environment workspace) before assuming an infra/ingress problem.
 - `infra/` — Bicep: `registry.bicep` (ACR, deployed first), `main.bicep`
-  (Log Analytics + Container Apps env + Postgres Flexible Server + Container App
-  with managed-identity ACR pull), `main.parameters.json` (non-secret defaults).
+  (Log Analytics + Container Apps env + Postgres Flexible Server + Storage
+  account with a public-blob-read `avatars` container + Container App
+  with managed-identity ACR pull; the storage key is injected as a Container
+  App secret via `listKeys()`), `main.parameters.json` (non-secret defaults).
   ACR pull identity is **user-assigned**, not system-assigned: a system-assigned
   identity's principalId only exists once the Container App resource is
   created, so the AcrPull role assignment would depend on the app — but the
@@ -120,6 +133,12 @@ but has no routes yet.
   toggles it via `PATCH /me { share_shelves }`). Non-friends and unknown ids
   get the same 403. Only the library opens up — feed/inbox/book-statuses stay
   self-only.
+- `PATCH /me` edits `display_name` (trimmed, 1–50 chars), `share_shelves`, and
+  `avatar_url` (absent = unchanged, `null` = remove, else must satisfy
+  `AvatarStorage::owns_avatar_url`). Handle isn't editable. Avatar flow:
+  `POST /me/avatar-upload` → app PUTs a resized JPEG to `upload_url` → `PATCH`
+  with the returned `avatar_url`. The container is public-blob-read
+  (unguessable names, no listing) so avatars load as plain image URLs.
 - Unique-violation mapping in `error.rs`: `users_handle_key` /
   `users_hanko_user_id_key` → **409** (handle taken / profile exists).
 - **`AUTH_DISABLED=true`** (local dev): skips JWT verification. `CurrentUser`

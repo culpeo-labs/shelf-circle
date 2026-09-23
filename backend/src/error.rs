@@ -18,6 +18,8 @@ pub enum ApiError {
     Forbidden(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("unavailable: {0}")]
+    Unavailable(String),
     #[error(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
@@ -34,6 +36,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m.clone()),
             ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            ApiError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
             ApiError::Auth(e) => match e {
                 AuthError::JwksUnavailable | AuthError::NotConfigured => {
                     tracing::error!("auth backend error: {e:?}");

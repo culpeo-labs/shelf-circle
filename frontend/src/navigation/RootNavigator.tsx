@@ -10,6 +10,7 @@ import { BookDetailScreen } from '../screens/books/BookDetailScreen';
 import { BookSearchScreen } from '../screens/books/BookSearchScreen';
 import { FinishBookScreen } from '../screens/books/FinishBookScreen';
 import { AcceptInviteScreen } from '../screens/friends/AcceptInviteScreen';
+import { EditProfileScreen } from '../screens/me/EditProfileScreen';
 import { AddFriendScreen } from '../screens/friends/AddFriendScreen';
 import { FriendProfileScreen } from '../screens/friends/FriendProfileScreen';
 import { ScanInviteScreen } from '../screens/friends/ScanInviteScreen';
@@ -65,6 +66,11 @@ export function RootNavigator() {
             name="RecommendToFriend"
             component={RecommendToFriendScreen}
             options={{ title: 'Recommend', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="EditProfile"
+            component={EditProfileScreen}
+            options={{ title: 'Edit profile' }}
           />
           <Stack.Screen
             name="AddFriend"

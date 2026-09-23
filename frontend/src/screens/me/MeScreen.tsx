@@ -1,13 +1,17 @@
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/AuthContext';
 import { Avatar } from '../../components/Avatar';
 import { useUpdateMe } from '../../hooks/queries';
+import type { RootStackParamList } from '../../navigation/types';
 
 export function MeScreen() {
   const { user, signOut } = useAuth();
   const updateMe = useUpdateMe();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   if (!user) return null;
 
   return (
@@ -15,6 +19,9 @@ export function MeScreen() {
       <Avatar url={user.avatar_url} name={user.display_name} size={80} />
       <Text style={styles.name}>{user.display_name}</Text>
       <Text style={styles.handle}>@{user.handle}</Text>
+      <Pressable onPress={() => navigation.navigate('EditProfile')} style={styles.editButton}>
+        <Text style={styles.editText}>Edit profile</Text>
+      </Pressable>
 
       <View style={styles.section}>
         <Row label="Locale" value={user.locale} />
@@ -59,6 +66,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, alignItems: 'center', padding: 32, paddingTop: 48, gap: 4 },
   name: { fontSize: 22, fontWeight: '700', color: '#2b2a26', marginTop: 12 },
   handle: { fontSize: 14, color: '#6b6456' },
+  editButton: { marginTop: 12, paddingVertical: 6, paddingHorizontal: 16 },
+  editText: { color: '#3b6e5e', fontWeight: '600', fontSize: 15 },
   section: { alignSelf: 'stretch', marginTop: 32, gap: 4 },
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
   rowLabel: { color: '#6b6456' },
