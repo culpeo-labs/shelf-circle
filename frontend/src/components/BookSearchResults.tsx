@@ -35,6 +35,7 @@ export function BookSearchResults({ onSelect }: { onSelect: (result: BookSearchR
   return (
     <View style={styles.flex}>
       <TextInput
+        placeholderTextColor="#918a78"
         style={styles.input}
         placeholder="Search by title, author, or ISBN"
         value={query}
@@ -109,6 +110,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+    color: '#2b2a26',
     marginHorizontal: 16,
     marginTop: 16,
   },

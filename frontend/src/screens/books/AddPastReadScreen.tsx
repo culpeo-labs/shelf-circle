@@ -159,6 +159,7 @@ function Field({
         {required ? ' *' : ''}
       </Text>
       <TextInput
+        placeholderTextColor="#918a78"
         style={styles.input}
         value={value}
         onChangeText={onChangeText}
@@ -194,6 +195,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+    color: '#2b2a26',
   },
   button: {
     backgroundColor: '#3b6e5e',

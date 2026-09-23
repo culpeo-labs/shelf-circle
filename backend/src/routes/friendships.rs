@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -10,7 +10,30 @@ use crate::models::{CreateFriendship, Friendship, User};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/friendships", post(create_friendship))
+    Router::new()
+        .route("/friendships", post(create_friendship))
+        .route("/me/friends", get(list_my_friends))
+}
+
+/// Everyone the caller is friends with, from either side of the canonicalized
+/// row — so an invite's creator sees the person who scanned their code, not
+/// only the scanner seeing the creator. Alphabetical by display name.
+async fn list_my_friends(
+    State(pool): State<PgPool>,
+    CurrentUser(me): CurrentUser,
+) -> ApiResult<Json<Vec<User>>> {
+    let friends = sqlx::query_as::<_, User>(
+        "select u.id, u.handle, u.display_name, u.avatar_url, u.locale, u.created_at \
+         from friendships f \
+         join users u on u.id = case when f.user_a_id = $1 then f.user_b_id else f.user_a_id end \
+         where f.user_a_id = $1 or f.user_b_id = $1 \
+         order by lower(u.display_name), u.id",
+    )
+    .bind(me.id)
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(Json(friends))
 }
 
 /// Friendship rows are canonicalized so user_a_id < user_b_id (see migration).

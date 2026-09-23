@@ -7,10 +7,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
-import { getUser } from '../../api/endpoints';
 import { Avatar } from '../../components/Avatar';
-import { useAuth } from '../../auth/AuthContext';
-import { useFriends } from '../../friends/FriendsContext';
 import { useAcceptInvite, useInvitePreview } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
@@ -21,8 +18,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AcceptInvite'>;
 export function AcceptInviteScreen({ route }: Props) {
   const { token } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { user: me } = useAuth();
-  const { upsertFriend } = useFriends();
   const preview = useInvitePreview(token);
   const acceptInvite = useAcceptInvite();
   const [acceptError, setAcceptError] = useState<string | null>(null);
@@ -30,21 +25,7 @@ export function AcceptInviteScreen({ route }: Props) {
   async function accept() {
     setAcceptError(null);
     try {
-      const friendship = await acceptInvite.mutateAsync(token);
-      // The accept itself has already succeeded server-side at this point
-      // (friendship created, token consumed) — a failure hydrating the
-      // friend's profile below shouldn't be reported as "could not accept
-      // this invite" (which would be actively misleading: retrying would
-      // just fail on the now-used token) or block leaving this screen.
-      const friendId =
-        friendship.user_a_id === me?.id ? friendship.user_b_id : friendship.user_a_id;
-      try {
-        const friend = await getUser(friendId);
-        upsertFriend(friend);
-      } catch {
-        // FriendsContext will still pick them up later via the feed's
-        // best-effort actor discovery.
-      }
+      await acceptInvite.mutateAsync(token);
       navigation.popToTop();
     } catch (e) {
       setAcceptError(e instanceof ApiError ? e.message : 'Could not accept this invite.');
