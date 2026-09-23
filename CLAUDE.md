@@ -205,7 +205,7 @@ but has no routes yet.
 
 Provider-response cache. Edition-level search granularity. Feed keyset id
 tiebreak; feed covers reading-status events only (no recommendation/friendship
-events). Library availability, affiliate links, reactions/comments routes. Auth
+events). Live library availability (the app only deep-links to the library's catalog search — `frontend/src/utils/library.ts`, hardcoded to Seattle Public Library; BiblioCommons' unauthenticated gateway API does expose available/total/holds counts if we ever want it), affiliate links, reactions/comments routes. Auth
 hardening (JWT `iss` check, friend-graph checks such as "recommend to friends
 only", rate limiting). VNet integration for Postgres (currently the "allow all
 Azure services" firewall rule).

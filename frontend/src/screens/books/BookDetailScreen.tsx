@@ -5,7 +5,7 @@ import type {
 import { useNavigation } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { ReadingStatus } from '../../api/types';
 import { BookCover } from '../../components/BookCover';
@@ -13,6 +13,7 @@ import { StarRating } from '../../components/StarRating';
 import { ErrorRetry, LoadingScreen } from '../../components/StatusViews';
 import { useBook, useBookStatuses, useSetBookStatus } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
+import { LIBRARY, libraryCatalogUrl } from '../../utils/library';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookDetail'>;
 
@@ -128,11 +129,19 @@ export function BookDetailScreen({ route }: Props) {
         <Text style={styles.recommendButtonText}>Recommend to a friend</Text>
       </Pressable>
 
+      <Pressable
+        style={styles.libraryButton}
+        onPress={() =>
+          void Linking.openURL(
+            libraryCatalogUrl(book.data.canonical_title, book.data.primary_author),
+          )
+        }
+      >
+        <Text style={styles.libraryButtonText}>Get it at {LIBRARY.name}</Text>
+      </Pressable>
+
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Coming soon</Text>
-        <View style={styles.disabledRow}>
-          <Text style={styles.disabledText}>Find at your library</Text>
-        </View>
         <View style={styles.disabledRow}>
           <Text style={styles.disabledText}>Buy a copy</Text>
         </View>
@@ -170,6 +179,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   recommendButtonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  libraryButton: {
+    borderWidth: 1,
+    borderColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  libraryButtonText: { color: '#3b6e5e', fontWeight: '600', fontSize: 15 },
   disabledRow: {
     borderWidth: 1,
     borderColor: '#e5e1d8',
