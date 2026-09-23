@@ -59,6 +59,22 @@ export function useUser(userId: UUID | undefined) {
   });
 }
 
+/**
+ * The caller's friends, straight from the server (`GET /me/friends`) so a friend
+ * who added *you* (e.g. scanned your invite QR) shows up too. Pass `pollMs`
+ * on screens that wait for that to happen.
+ */
+export function useFriends(opts: { pollMs?: number } = {}) {
+  const { user } = useAuth();
+  const query = useQuery({
+    queryKey: ['friends', user?.id],
+    queryFn: api.listFriends,
+    enabled: !!user,
+    refetchInterval: opts.pollMs,
+  });
+  return { ...query, friends: query.data ?? [] };
+}
+
 export function useRecommendationsInbox() {
   const { user } = useAuth();
   return useQuery({
@@ -128,7 +144,9 @@ export function useAcceptInvite() {
   return useMutation({
     mutationFn: (token: string) => api.acceptInvite(token),
     onSuccess: () => {
-      if (user) void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
+      if (!user) return;
+      void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
+      void queryClient.invalidateQueries({ queryKey: ['friends', user.id] });
     },
   });
 }

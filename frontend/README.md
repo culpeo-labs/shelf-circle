@@ -90,9 +90,6 @@ individual's `eas login`.
   `GET /users/{id}/library` (and `/book-statuses`, `/feed`,
   `/recommendations/inbox`) are self-only — a friend's shelf isn't fetchable
   at all. No workaround short of a backend change.
-- **No "list my friends" endpoint.** The friend list is derived client-side
-  (`FriendsContext`, persisted to `AsyncStorage`) from friendships you've
-  created and actors seen in the feed — best-effort, not authoritative.
 - **Shelf-control mutations aren't optimistic.** The spec asked for
   optimistic updates on shelf/progress changes; currently these wait for the
   server round-trip.

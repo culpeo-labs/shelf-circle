@@ -8,7 +8,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from './src/auth/AuthContext';
-import { FriendsProvider } from './src/friends/FriendsContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import type { RootStackParamList } from './src/navigation/types';
 
@@ -38,11 +37,9 @@ export default function App() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <FriendsProvider>
-              <NavigationContainer linking={linking}>
-                <RootNavigator />
-              </NavigationContainer>
-            </FriendsProvider>
+            <NavigationContainer linking={linking}>
+              <RootNavigator />
+            </NavigationContainer>
           </AuthProvider>
         </QueryClientProvider>
         <StatusBar style="auto" />

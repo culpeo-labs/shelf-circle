@@ -63,6 +63,7 @@ export function CreateIdentityScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Display name</Text>
           <TextInput
+            placeholderTextColor="#918a78"
             style={styles.input}
             value={displayName}
             onChangeText={setDisplayName}
@@ -75,6 +76,7 @@ export function CreateIdentityScreen() {
         <View style={styles.field}>
           <Text style={styles.label}>Handle</Text>
           <TextInput
+            placeholderTextColor="#918a78"
             style={styles.input}
             value={handle}
             onChangeText={(text) => setHandle(text.toLowerCase())}
@@ -121,6 +123,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+    color: '#2b2a26',
   },
   fieldError: { color: '#b3432b', fontSize: 13 },
   button: {
