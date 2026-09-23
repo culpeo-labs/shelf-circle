@@ -75,22 +75,6 @@ Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/proje
   manual `frontend-store-submit.yml` is the alternative that builds fresh and
   uploads a _draft_ to the production track. Not wired for iOS yet.
 
-**One-time setup for Play submission.** `eas submit` (and so the workflows
-above) needs a Google Play service-account key stored in EAS; without it the
-submit step fails with "Google Service Account Keys cannot be set up in
---non-interactive mode". Set it up once, interactively:
-
-1. Google Cloud: enable the _Google Play Android Developer API_, create a
-   service account, and download a JSON key for it.
-2. Play Console → Users and permissions: invite the service account's email
-   and grant it release permissions for this app.
-3. `npx eas-cli credentials --platform android` → _production_ → _Google
-   Service Account_ → upload the JSON key (or expo.dev → project →
-   Credentials → Android).
-
-If a build already finished but its submit failed, submit that build directly
-instead of rebuilding: `eas submit --platform android --profile internal --id <build-id>`.
-
 `EXPO_PUBLIC_API_BASE_URL` / `EXPO_PUBLIC_HANKO_API_URL` are set as EAS
 environment variables (`eas env:list`), not read from `.env` — EAS Build
 runs in a clean cloud checkout that never sees the (gitignored) local
