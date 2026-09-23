@@ -40,7 +40,9 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   exposing a `router()`; wired in `routes/mod.rs`. Each file self-contains its
   response structs. `friendships::upsert_friendship` (the canonicalized
   insert-or-noop) is `pub` and shared with `invites::accept_invite` — don't
-  reimplement it a third time.
+  reimplement it a third time. `GET /me/friends` (same file) lists friends from
+  either side of the canonicalized row — the app's friend list reads it (an
+  invite's creator has no other way to learn who accepted).
 - `migrations/` — `0001_init.sql` (v1 schema), `0002_activity_events.sql`
   (timeline log + trigger), `0003_ratings.sql` (`book_statuses.rating`),
   `0004_auth.sql` (`users.hanko_user_id` + `users.email`), `0005_invites.sql`

@@ -31,6 +31,9 @@ export const createUser = (input: CreateUserInput) =>
 
 export const getUser = (id: UUID) => apiFetch<User>(`/users/${id}`);
 
+/** Everyone the caller is friends with, whichever side created the invite. */
+export const listFriends = () => apiFetch<User[]>('/me/friends');
+
 /** Creates a new invite token for the caller (share as a QR code or link). */
 export const createInvite = () => apiFetch<Invite>('/invites', { method: 'POST' });
 

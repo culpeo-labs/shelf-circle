@@ -1,16 +1,23 @@
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
-import React from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import React, { useCallback } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/StatusViews';
-import { useFriends } from '../../friends/FriendsContext';
+import { useFriends } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
 export function FriendsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { friends } = useFriends();
+  const { friends, refetch, isRefetching } = useFriends();
+
+  // Someone may have accepted your invite while you were elsewhere.
+  useFocusEffect(
+    useCallback(() => {
+      void refetch();
+    }, [refetch]),
+  );
 
   return (
     <View style={styles.flex}>
@@ -28,6 +35,9 @@ export function FriendsScreen() {
           data={friends}
           keyExtractor={(f) => f.id}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />
+          }
           renderItem={({ item }) => (
             <Pressable
               style={styles.row}

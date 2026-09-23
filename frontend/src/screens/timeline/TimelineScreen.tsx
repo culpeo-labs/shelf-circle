@@ -1,23 +1,19 @@
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
 import type { FeedItem } from '../../api/types';
-import { useAuth } from '../../auth/AuthContext';
 import { Avatar } from '../../components/Avatar';
 import { BookCover } from '../../components/BookCover';
 import { EmptyState, ErrorRetry, LoadingScreen } from '../../components/StatusViews';
-import { useFriends } from '../../friends/FriendsContext';
 import { useFeed } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 import { relativeTime } from '../../utils/time';
 
 export function TimelineScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { user } = useAuth();
-  const { upsertFriends } = useFriends();
   const {
     data,
     isLoading,
@@ -36,13 +32,6 @@ export function TimelineScreen() {
     const seen = new Set<string>();
     return items.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)));
   }, [items]);
-
-  useEffect(() => {
-    // There's no "list my friends" endpoint (see FriendsContext) — feed
-    // actors are one of the two ways we discover who's actually a friend.
-    const others = deduped.filter((item) => item.actor.id !== user?.id).map((item) => item.actor);
-    if (others.length > 0) upsertFriends(others);
-  }, [deduped, user?.id, upsertFriends]);
 
   if (isLoading) return <LoadingScreen />;
   if (isError) {

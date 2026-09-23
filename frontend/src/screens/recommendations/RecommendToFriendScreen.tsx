@@ -14,9 +14,8 @@ import {
   View,
 } from 'react-native';
 
-import type { FriendSummary } from '../../friends/FriendsContext';
-import { useFriends } from '../../friends/FriendsContext';
-import { useCreateRecommendation } from '../../hooks/queries';
+import type { User } from '../../api/types';
+import { useCreateRecommendation, useFriends } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/StatusViews';
@@ -26,7 +25,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'RecommendToFriend'>;
 export function RecommendToFriendScreen({ route, navigation }: Props) {
   const { bookId } = route.params;
   const { friends } = useFriends();
-  const [selected, setSelected] = useState<FriendSummary | null>(null);
+  const [selected, setSelected] = useState<User | null>(null);
   const [note, setNote] = useState('');
   const [sent, setSent] = useState(false);
   const createRecommendation = useCreateRecommendation();
@@ -74,6 +73,7 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
       />
       <View style={styles.footer}>
         <TextInput
+          placeholderTextColor="#918a78"
           style={styles.note}
           placeholder="Add a note (optional)"
           value={note}
@@ -118,6 +118,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     backgroundColor: '#fff',
+    color: '#2b2a26',
     minHeight: 44,
   },
   button: {

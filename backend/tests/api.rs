@@ -826,6 +826,55 @@ async fn invites_full_flow() {
     );
 }
 
+/// Regression: after a QR/link invite is accepted, the *inviter* must see the
+/// scanner in their friend list too, not only the other way round.
+#[tokio::test]
+async fn friend_list_is_symmetric_and_scoped_to_the_caller() {
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, _id_c) = onboard(&app, "hanko|c", "carol").await;
+
+    let (status, friends) = send(&app.router, get_request("/me/friends", Some(&token_a))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(friends, json!([]), "no friends yet");
+
+    let (_, invite) = send(
+        &app.router,
+        json_request("POST", "/invites", Some(&token_a), json!({})),
+    )
+    .await;
+    let invite_token = invite["token"].as_str().unwrap();
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{invite_token}/accept"),
+            Some(&token_b),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Inviter (alice) sees the scanner (bob)...
+    let (_, friends) = send(&app.router, get_request("/me/friends", Some(&token_a))).await;
+    let friends = friends.as_array().unwrap();
+    assert_eq!(friends.len(), 1);
+    assert_eq!(friends[0]["id"], id_b);
+    assert_eq!(friends[0]["handle"], "bob");
+
+    // ...and the scanner sees the inviter.
+    let (_, friends) = send(&app.router, get_request("/me/friends", Some(&token_b))).await;
+    let friends = friends.as_array().unwrap();
+    assert_eq!(friends.len(), 1);
+    assert_eq!(friends[0]["id"], id_a);
+
+    // A third user is not affected.
+    let (_, friends) = send(&app.router, get_request("/me/friends", Some(&token_c))).await;
+    assert_eq!(friends, json!([]));
+}
+
 /// Friends can read your library only after you opt in with
 /// `PATCH /me { share_shelves: true }`; strangers never can; turning it off
 /// closes it again. Off by default.

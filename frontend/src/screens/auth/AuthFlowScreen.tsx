@@ -173,6 +173,7 @@ export function AuthFlowScreen() {
                 return (
                   <View key={input.name} style={styles.inputWrapper}>
                     <TextInput
+                      placeholderTextColor="#918a78"
                       style={[styles.input, isPassword && styles.inputWithToggle]}
                       placeholder={prettify(input.name)}
                       value={values[input.name] ?? ''}
@@ -259,6 +260,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+    color: '#2b2a26',
   },
   inputWithToggle: { paddingRight: 64 },
   revealToggle: { position: 'absolute', right: 12, paddingVertical: 8, paddingHorizontal: 4 },
