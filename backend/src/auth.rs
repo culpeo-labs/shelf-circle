@@ -332,7 +332,7 @@ where
         let user = if auth.disabled {
             let id = debug_user_id(parts)?;
             sqlx::query_as::<_, User>(
-                "select id, handle, display_name, avatar_url, locale, created_at \
+                "select id, handle, display_name, avatar_url, locale, share_shelves, created_at \
                  from users where id = $1",
             )
             .bind(id)
@@ -342,7 +342,7 @@ where
             let token = bearer(parts)?;
             let claims = auth.verify(token).await?;
             sqlx::query_as::<_, User>(
-                "select id, handle, display_name, avatar_url, locale, created_at \
+                "select id, handle, display_name, avatar_url, locale, share_shelves, created_at \
                  from users where hanko_user_id = $1",
             )
             .bind(&claims.sub)
@@ -457,6 +457,7 @@ mod tests {
             display_name: "H".into(),
             avatar_url: None,
             locale: "en".into(),
+            share_shelves: false,
             created_at: Utc::now(),
         }
     }

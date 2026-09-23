@@ -6,6 +6,7 @@ import type {
   LibraryShelf,
   ResolvedBookInput,
   SetBookStatusInput,
+  UpdateMeInput,
   UUID,
 } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -31,6 +32,27 @@ export function useLibrary(shelf: LibraryShelf) {
     queryKey: ['library', user?.id, shelf],
     queryFn: () => api.getLibrary(user!.id, shelf),
     enabled: !!user,
+  });
+}
+
+/** A friend's library — the server 403s unless they've turned on sharing. */
+export function useFriendLibrary(userId: UUID | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['library', userId, 'all'],
+    queryFn: () => api.getLibrary(userId!, 'all'),
+    enabled: !!userId && enabled,
+  });
+}
+
+export function useUpdateMe() {
+  const { updateUser } = useAuth();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateMeInput) => api.updateMe(input),
+    onSuccess: async (updated) => {
+      await updateUser(updated);
+      void queryClient.invalidateQueries({ queryKey: ['user', updated.id] });
+    },
   });
 }
 

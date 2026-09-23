@@ -1,15 +1,19 @@
 use axum::extract::State;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use sqlx::PgPool;
+use std::sync::Arc;
 
-use crate::auth::AuthClaims;
+use crate::auth::{AuthClaims, CurrentUser};
 use crate::error::{ApiError, ApiResult};
-use crate::models::User;
+use crate::models::{AvatarUploadTicket, UpdateMe, User};
 use crate::state::AppState;
+use crate::storage::AvatarStorage;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/me", get(get_me))
+    Router::new()
+        .route("/me", get(get_me).patch(update_me))
+        .route("/me/avatar-upload", post(avatar_upload))
 }
 
 /// The profile for the current token. `404` means the token is valid but the
@@ -19,7 +23,7 @@ async fn get_me(
     AuthClaims(claims): AuthClaims,
 ) -> ApiResult<Json<User>> {
     let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, created_at \
+        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at \
          from users where hanko_user_id = $1",
     )
     .bind(&claims.sub)
@@ -28,4 +32,74 @@ async fn get_me(
     .ok_or(ApiError::NotFound)?;
 
     Ok(Json(user))
+}
+
+const MAX_DISPLAY_NAME_CHARS: usize = 50;
+
+/// Edit the caller's own profile. Only fields present in the body change.
+async fn update_me(
+    State(pool): State<PgPool>,
+    State(storage): State<Option<Arc<AvatarStorage>>>,
+    CurrentUser(me): CurrentUser,
+    Json(input): Json<UpdateMe>,
+) -> ApiResult<Json<User>> {
+    let display_name = match input.display_name.as_deref().map(str::trim) {
+        Some(n) if n.is_empty() || n.chars().count() > MAX_DISPLAY_NAME_CHARS => {
+            return Err(ApiError::BadRequest(format!(
+                "display_name must be 1-{MAX_DISPLAY_NAME_CHARS} characters"
+            )));
+        }
+        other => other,
+    };
+
+    // Only URLs this API minted for the caller (see `AvatarStorage`) — never an
+    // arbitrary external URL, and never another user's blob. `null` clears it.
+    if let Some(Some(url)) = &input.avatar_url {
+        let ok = storage
+            .as_ref()
+            .is_some_and(|s| s.owns_avatar_url(me.id, url));
+        if !ok {
+            return Err(ApiError::BadRequest(
+                "avatar_url must come from POST /me/avatar-upload".into(),
+            ));
+        }
+    }
+    let (set_avatar, avatar_url) = match input.avatar_url {
+        Some(url) => (true, url),
+        None => (false, None),
+    };
+
+    let user = sqlx::query_as::<_, User>(
+        "update users set \
+             share_shelves = coalesce($2, share_shelves), \
+             display_name = coalesce($3, display_name), \
+             avatar_url = case when $4 then $5 else avatar_url end \
+         where id = $1 \
+         returning id, handle, display_name, avatar_url, locale, share_shelves, created_at",
+    )
+    .bind(me.id)
+    .bind(input.share_shelves)
+    .bind(display_name)
+    .bind(set_avatar)
+    .bind(avatar_url)
+    .fetch_one(&pool)
+    .await?;
+
+    Ok(Json(user))
+}
+
+/// Step 1 of changing the avatar: a short-lived, write-only URL to `PUT` a JPEG
+/// to. 503 when the server has no Blob Storage configured.
+async fn avatar_upload(
+    State(storage): State<Option<Arc<AvatarStorage>>>,
+    CurrentUser(me): CurrentUser,
+) -> ApiResult<Json<AvatarUploadTicket>> {
+    let storage =
+        storage.ok_or_else(|| ApiError::Unavailable("avatar uploads aren't configured".into()))?;
+    let up = storage.create_upload(me.id);
+    Ok(Json(AvatarUploadTicket {
+        upload_url: up.upload_url,
+        avatar_url: up.avatar_url,
+        expires_at: up.expires_at,
+    }))
 }

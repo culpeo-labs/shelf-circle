@@ -23,7 +23,7 @@ async fn list_my_friends(
     CurrentUser(me): CurrentUser,
 ) -> ApiResult<Json<Vec<User>>> {
     let friends = sqlx::query_as::<_, User>(
-        "select u.id, u.handle, u.display_name, u.avatar_url, u.locale, u.created_at \
+        "select u.id, u.handle, u.display_name, u.avatar_url, u.locale, u.share_shelves, u.created_at \
          from friendships f \
          join users u on u.id = case when f.user_a_id = $1 then f.user_b_id else f.user_a_id end \
          where f.user_a_id = $1 or f.user_b_id = $1 \
@@ -83,7 +83,7 @@ pub async fn upsert_friendship(
 
 async fn fetch_user_by_handle(pool: &PgPool, handle: &str) -> ApiResult<User> {
     sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, created_at from users where handle = $1",
+        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where handle = $1",
     )
     .bind(handle)
     .fetch_optional(pool)

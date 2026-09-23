@@ -10,7 +10,35 @@ pub struct User {
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub locale: String,
+    /// Whether friends may read this user's library (`GET /users/{id}/library`).
+    pub share_shelves: bool,
     pub created_at: DateTime<Utc>,
+}
+
+/// `PATCH /me` body: only the fields present are changed. `avatar_url` also
+/// distinguishes absent (leave alone) from `null` (remove the avatar).
+#[derive(Debug, Deserialize)]
+pub struct UpdateMe {
+    pub share_shelves: Option<bool>,
+    pub display_name: Option<String>,
+    #[serde(default, deserialize_with = "present_or_null")]
+    pub avatar_url: Option<Option<String>>,
+}
+
+fn present_or_null<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+/// `POST /me/avatar-upload` response: see `storage.rs` for the flow.
+#[derive(Debug, Serialize)]
+pub struct AvatarUploadTicket {
+    pub upload_url: String,
+    pub avatar_url: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]

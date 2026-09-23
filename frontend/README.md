@@ -86,10 +86,13 @@ individual's `eas login`.
   local dev origin either — both would need configuring before
   `npx expo start --web` (or the `web` npm script) works. Untested and not a
   supported target right now; use Expo Go or a dev build.
-- **FriendProfile is name/avatar only.** The backend's
-  `GET /users/{id}/library` (and `/book-statuses`, `/feed`,
-  `/recommendations/inbox`) are self-only — a friend's shelf isn't fetchable
-  at all. No workaround short of a backend change.
+- **Friends see your shelves only if you opt in.** `PATCH /me
+{ share_shelves }` (off by default); `/users/{id}/library` is readable by
+  the owner, or by a friend when that's on. `/book-statuses`, `/feed` and
+  `/recommendations/inbox` remain self-only.
+- **Profile editing needs a fresh native build.** Avatar upload adds
+  `expo-image-picker` + `expo-image-manipulator` (native modules), so it won't
+  work in an already-installed build until you cut a new one with EAS.
 - **Shelf-control mutations aren't optimistic.** The spec asked for
   optimistic updates on shelf/progress changes; currently these wait for the
   server round-trip.

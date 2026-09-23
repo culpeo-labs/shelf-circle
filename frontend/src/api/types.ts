@@ -16,7 +16,24 @@ export interface User {
   display_name: string;
   avatar_url: string | null;
   locale: string;
+  /** Whether friends can read this user's library (opt-in, off by default). */
+  share_shelves: boolean;
   created_at: Timestamp;
+}
+
+/** PATCH /me body — only the fields present change. */
+export interface UpdateMeInput {
+  share_shelves?: boolean;
+  display_name?: string;
+  /** A URL from `POST /me/avatar-upload`, or `null` to remove the photo. */
+  avatar_url?: string | null;
+}
+
+/** POST /me/avatar-upload — PUT the JPEG to `upload_url`, then PATCH `avatar_url`. */
+export interface AvatarUploadTicket {
+  upload_url: string;
+  avatar_url: string;
+  expires_at: Timestamp;
 }
 
 export interface CreateUserInput {

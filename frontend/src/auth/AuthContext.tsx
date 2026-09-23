@@ -22,6 +22,8 @@ interface AuthContextValue {
   completeWithToken: (token: string) => Promise<void>;
   /** Called once `POST /users` succeeds during onboarding. */
   completeOnboarding: (user: User) => Promise<void>;
+  /** Replace the cached profile after an edit (e.g. `PATCH /me`). */
+  updateUser: (user: User) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -88,6 +90,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus('signed-in');
   }, []);
 
+  const updateUser = useCallback(async (updated: User) => {
+    await SecureStore.setItemAsync(USER_KEY, JSON.stringify(updated));
+    setUser(updated);
+  }, []);
+
   const signOut = useCallback(async () => {
     await clearStoredSession();
     setUser(null);
@@ -95,8 +102,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [clearStoredSession]);
 
   const value = useMemo(
-    () => ({ status, user, completeWithToken, completeOnboarding, signOut }),
-    [status, user, completeWithToken, completeOnboarding, signOut],
+    () => ({ status, user, completeWithToken, completeOnboarding, updateUser, signOut }),
+    [status, user, completeWithToken, completeOnboarding, updateUser, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

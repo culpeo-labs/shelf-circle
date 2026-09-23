@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::{ensure_self, CurrentUser};
+use crate::auth::CurrentUser;
 use crate::error::{ApiError, ApiResult};
-use crate::models::ReadingStatus;
+use crate::models::{ReadingStatus, User};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -32,6 +32,40 @@ fn shelf_filter(shelf: &str) -> Option<&'static str> {
         "did_not_finish" => Some("bs.status = 'did_not_finish'"),
         "all" => Some("true"),
         _ => None,
+    }
+}
+
+/// You can read your own library, or a friend's if they opted in
+/// (`users.share_shelves`). Non-friends and unknown ids get the same 403 so
+/// this doesn't reveal who exists.
+async fn ensure_can_view_library(pool: &PgPool, me: &User, owner_id: Uuid) -> ApiResult<()> {
+    if me.id == owner_id {
+        return Ok(());
+    }
+    let (low, high) = if me.id < owner_id {
+        (me.id, owner_id)
+    } else {
+        (owner_id, me.id)
+    };
+    let shared = sqlx::query_scalar::<_, bool>(
+        "select u.share_shelves from friendships f \
+         join users u on u.id = $3 \
+         where f.user_a_id = $1 and f.user_b_id = $2",
+    )
+    .bind(low)
+    .bind(high)
+    .bind(owner_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match shared {
+        Some(true) => Ok(()),
+        Some(false) => Err(ApiError::Forbidden(
+            "this friend hasn't shared their shelves".into(),
+        )),
+        None => Err(ApiError::Forbidden(
+            "you can only view your own or a friend's shelves".into(),
+        )),
     }
 }
 
@@ -64,7 +98,10 @@ pub struct LibraryEntry {
     pub book: LibraryBook,
 }
 
-/// A user's own shelves. `?shelf=reading` is the in-progress view; `?shelf=read`
+/// A user's shelves: always your own; a friend's only if they've turned on
+/// `share_shelves`.
+///
+/// `?shelf=reading` is the in-progress view; `?shelf=read`
 /// is everything they've finished or abandoned (with ratings). To add a book
 /// they read off-platform, resolve it first (`/books/search` + `/books/resolve`,
 /// or a manual `/books/resolve` body) then `PUT /book-statuses` with
@@ -75,7 +112,7 @@ async fn user_library(
     Path(user_id): Path<Uuid>,
     Query(params): Query<LibraryParams>,
 ) -> ApiResult<Json<Vec<LibraryEntry>>> {
-    ensure_self(&me, user_id)?;
+    ensure_can_view_library(&pool, &me, user_id).await?;
 
     let filter = match params.shelf.as_deref() {
         None => "true",
