@@ -87,7 +87,7 @@ individual's `eas login`.
   `npx expo start --web` (or the `web` npm script) works. Untested and not a
   supported target right now; use Expo Go or a dev build.
 - **Friends see your shelves only if you opt in.** `PATCH /me
-  { share_shelves }` (off by default); `/users/{id}/library` is readable by
+{ share_shelves }` (off by default); `/users/{id}/library` is readable by
   the owner, or by a friend when that's on. `/book-statuses`, `/feed` and
   `/recommendations/inbox` remain self-only.
 - **Shelf-control mutations aren't optimistic.** The spec asked for
