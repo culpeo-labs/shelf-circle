@@ -5,6 +5,7 @@ pub mod models;
 pub mod providers;
 pub mod routes;
 pub mod state;
+pub mod storage;
 
 use axum::routing::get;
 use axum::Router;

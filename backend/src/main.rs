@@ -6,6 +6,7 @@ use tokio::net::TcpListener;
 use shelf_circle_backend::auth::HankoAuth;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
+use shelf_circle_backend::storage::AvatarStorage;
 use shelf_circle_backend::{app, db};
 
 #[tokio::main]
@@ -35,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         providers: Arc::new(BookProviders::from_env()),
         auth,
+        storage: AvatarStorage::from_env()?.map(Arc::new),
     };
 
     let app = app(state);

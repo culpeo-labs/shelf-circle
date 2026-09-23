@@ -5,6 +5,7 @@ use sqlx::PgPool;
 
 use crate::auth::HankoAuth;
 use crate::providers::BookProviders;
+use crate::storage::AvatarStorage;
 
 /// Shared application state. Handlers extract the piece they need via
 /// `State<PgPool>`, `State<Arc<BookProviders>>`, or `State<Arc<HankoAuth>>` (all
@@ -16,6 +17,8 @@ pub struct AppState {
     pub pool: PgPool,
     pub providers: Arc<BookProviders>,
     pub auth: Arc<HankoAuth>,
+    /// `None` when Azure Blob Storage isn't configured (avatar upload → 503).
+    pub storage: Option<Arc<AvatarStorage>>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -33,5 +36,11 @@ impl FromRef<AppState> for Arc<BookProviders> {
 impl FromRef<AppState> for Arc<HankoAuth> {
     fn from_ref(state: &AppState) -> Self {
         state.auth.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<Arc<AvatarStorage>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.storage.clone()
     }
 }

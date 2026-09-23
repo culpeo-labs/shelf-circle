@@ -90,6 +90,9 @@ individual's `eas login`.
 { share_shelves }` (off by default); `/users/{id}/library` is readable by
   the owner, or by a friend when that's on. `/book-statuses`, `/feed` and
   `/recommendations/inbox` remain self-only.
+- **Profile editing needs a fresh native build.** Avatar upload adds
+  `expo-image-picker` + `expo-image-manipulator` (native modules), so it won't
+  work in an already-installed build until you cut a new one with EAS.
 - **Shelf-control mutations aren't optimistic.** The spec asked for
   optimistic updates on shelf/progress changes; currently these wait for the
   server round-trip.
