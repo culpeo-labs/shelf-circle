@@ -15,12 +15,16 @@ import type {
   Recommendation,
   ResolvedBookInput,
   SetBookStatusInput,
+  UpdateMeInput,
   User,
   UUID,
 } from './types';
 
 /** 404 means the token is valid but onboarding (`POST /users`) hasn't run yet. */
 export const getMe = () => apiFetch<User>('/me');
+
+export const updateMe = (input: UpdateMeInput) =>
+  apiFetch<User>('/me', { method: 'PATCH', body: input });
 
 export const createUser = (input: CreateUserInput) =>
   apiFetch<User>('/users', { method: 'POST', body: input });

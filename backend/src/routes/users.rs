@@ -35,7 +35,7 @@ async fn create_user(
         r#"
         insert into users (handle, display_name, locale, hanko_user_id, email)
         values ($1, $2, coalesce($3, 'en'), $4, $5)
-        returning id, handle, display_name, avatar_url, locale, created_at
+        returning id, handle, display_name, avatar_url, locale, share_shelves, created_at
         "#,
     )
     .bind(&input.handle)
@@ -55,7 +55,7 @@ async fn get_user(
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<User>> {
     let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, created_at from users where id = $1",
+        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where id = $1",
     )
     .bind(id)
     .fetch_optional(&pool)
@@ -71,7 +71,7 @@ async fn get_user_by_handle(
     Path(handle): Path<String>,
 ) -> ApiResult<Json<User>> {
     let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, created_at from users where handle = $1",
+        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where handle = $1",
     )
     .bind(handle)
     .fetch_optional(&pool)

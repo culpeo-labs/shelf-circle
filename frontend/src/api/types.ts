@@ -16,7 +16,14 @@ export interface User {
   display_name: string;
   avatar_url: string | null;
   locale: string;
+  /** Whether friends can read this user's library (opt-in, off by default). */
+  share_shelves: boolean;
   created_at: Timestamp;
+}
+
+/** PATCH /me body — only the fields present change. */
+export interface UpdateMeInput {
+  share_shelves?: boolean;
 }
 
 export interface CreateUserInput {

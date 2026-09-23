@@ -826,6 +826,99 @@ async fn invites_full_flow() {
     );
 }
 
+/// Friends can read your library only after you opt in with
+/// `PATCH /me { share_shelves: true }`; strangers never can; turning it off
+/// closes it again. Off by default.
+#[tokio::test]
+async fn library_is_visible_to_friends_only_when_shared() {
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, _id_c) = onboard(&app, "hanko|c", "carol").await;
+
+    let book_id = resolve_book(&app, &token_a, "OL1W").await;
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token_a),
+            json!({ "book_id": book_id, "status": "finished", "rating": 5 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // alice <-> bob are friends; carol is a stranger.
+    send(
+        &app.router,
+        json_request(
+            "POST",
+            "/friendships",
+            Some(&token_b),
+            json!({ "user_handle": "alice" }),
+        ),
+    )
+    .await;
+
+    let library = format!("/users/{id_a}/library");
+
+    let (_, me) = send(&app.router, get_request("/me", Some(&token_a))).await;
+    assert_eq!(me["share_shelves"], false, "private by default");
+
+    let (status, _) = send(&app.router, get_request(&library, Some(&token_b))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "friend, not shared yet");
+
+    let (status, me) = send(
+        &app.router,
+        json_request(
+            "PATCH",
+            "/me",
+            Some(&token_a),
+            json!({ "share_shelves": true }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {me}");
+    assert_eq!(me["share_shelves"], true);
+
+    let (status, entries) = send(&app.router, get_request(&library, Some(&token_b))).await;
+    assert_eq!(status, StatusCode::OK, "friend, shared");
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["rating"], 5);
+
+    let (status, _) = send(&app.router, get_request(&library, Some(&token_c))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "stranger, even when shared");
+
+    // Sharing doesn't open the other self-only routes to friends.
+    let (status, _) = send(
+        &app.router,
+        get_request(&format!("/users/{id_a}/book-statuses"), Some(&token_b)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // An empty PATCH changes nothing; turning it off closes the door again.
+    let (_, me) = send(
+        &app.router,
+        json_request("PATCH", "/me", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(me["share_shelves"], true);
+    send(
+        &app.router,
+        json_request(
+            "PATCH",
+            "/me",
+            Some(&token_a),
+            json!({ "share_shelves": false }),
+        ),
+    )
+    .await;
+    let (status, _) = send(&app.router, get_request(&library, Some(&token_b))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

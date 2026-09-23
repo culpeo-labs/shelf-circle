@@ -60,7 +60,7 @@ pub async fn upsert_friendship(
 
 async fn fetch_user_by_handle(pool: &PgPool, handle: &str) -> ApiResult<User> {
     sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, created_at from users where handle = $1",
+        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where handle = $1",
     )
     .bind(handle)
     .fetch_optional(pool)

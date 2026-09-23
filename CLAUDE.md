@@ -51,7 +51,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   shelf_circle.suppress_activity = 'true'` — see **Timeline / feed** below),
   `0008_...sql` (adds `book_statuses.backdated boolean not null default
   false` — persists the same flag on the row itself, for a "logged as
-  backlog" badge; see **Timeline / feed**). UUID default is
+  backlog" badge; see **Timeline / feed**), `0009_share_shelves.sql`
+  (`users.share_shelves boolean not null default false`). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -113,7 +114,12 @@ but has no routes yet.
 - The acting user comes from the token, never the body: `SetBookStatus` /
   `CreateRecommendation` / `CreateFriendship` dropped `user_id` / `from_user_id` /
   the second handle. `/users/{user_id}/…` routes call `ensure_self(&me, user_id)`
-  (feed, library, inbox, book-statuses list) → 403 on mismatch.
+  (feed, library, inbox, book-statuses list) → 403 on mismatch. **Exception:**
+  `/users/{id}/library` also allows a *friend* of the owner when
+  `users.share_shelves` is true (`library::ensure_can_view_library`; the owner
+  toggles it via `PATCH /me { share_shelves }`). Non-friends and unknown ids
+  get the same 403. Only the library opens up — feed/inbox/book-statuses stay
+  self-only.
 - Unique-violation mapping in `error.rs`: `users_handle_key` /
   `users_hanko_user_id_key` → **409** (handle taken / profile exists).
 - **`AUTH_DISABLED=true`** (local dev): skips JWT verification. `CurrentUser`

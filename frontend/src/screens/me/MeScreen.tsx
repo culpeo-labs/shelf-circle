@@ -1,11 +1,13 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/AuthContext';
 import { Avatar } from '../../components/Avatar';
+import { useUpdateMe } from '../../hooks/queries';
 
 export function MeScreen() {
   const { user, signOut } = useAuth();
+  const updateMe = useUpdateMe();
   if (!user) return null;
 
   return (
@@ -19,7 +21,23 @@ export function MeScreen() {
         <Row label="Member since" value={new Date(user.created_at).toLocaleDateString()} />
       </View>
 
-      <Text style={styles.note}>Profile editing coming soon.</Text>
+      <View style={styles.shareRow}>
+        <View style={styles.shareText}>
+          <Text style={styles.shareTitle}>Share my bookshelves with friends</Text>
+          <Text style={styles.note}>
+            {user.share_shelves
+              ? 'Your friends can see what you’re reading, have read, and want to read.'
+              : 'Only you can see your bookshelves. Your timeline activity is unaffected.'}
+          </Text>
+          {updateMe.isError && <Text style={styles.error}>Couldn’t save that. Try again.</Text>}
+        </View>
+        <Switch
+          value={user.share_shelves}
+          disabled={updateMe.isPending}
+          onValueChange={(value) => updateMe.mutate({ share_shelves: value })}
+          trackColor={{ true: '#3b6e5e' }}
+        />
+      </View>
 
       <Pressable style={styles.signOutButton} onPress={() => void signOut()}>
         <Text style={styles.signOutText}>Sign out</Text>
@@ -45,7 +63,17 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
   rowLabel: { color: '#6b6456' },
   rowValue: { color: '#2b2a26', fontWeight: '500' },
-  note: { fontSize: 12, color: '#918a78', marginTop: 16 },
+  note: { fontSize: 12, color: '#918a78', marginTop: 4 },
+  error: { fontSize: 12, color: '#b3432b', marginTop: 4 },
+  shareRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 24,
+  },
+  shareText: { flex: 1 },
+  shareTitle: { fontSize: 15, fontWeight: '600', color: '#2b2a26' },
   signOutButton: {
     marginTop: 40,
     borderWidth: 1,

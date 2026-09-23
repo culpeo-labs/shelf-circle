@@ -10,7 +10,15 @@ pub struct User {
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub locale: String,
+    /// Whether friends may read this user's library (`GET /users/{id}/library`).
+    pub share_shelves: bool,
     pub created_at: DateTime<Utc>,
+}
+
+/// `PATCH /me` body: only the fields present are changed.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMe {
+    pub share_shelves: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
