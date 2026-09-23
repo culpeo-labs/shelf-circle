@@ -64,8 +64,16 @@ Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/proje
   check the EAS dashboard for build status, it isn't wired back into the
   GitHub Actions run).
 - **production** — real Play Store AAB, and (once there's an Apple
-  Developer account to sign with) an App Store IPA. Not automated yet —
-  run `eas build --profile production` by hand when it's time.
+  Developer account to sign with) an App Store IPA. Android is automated
+  into **Play internal testing**: every push to `main` that touches the app
+  (non-markdown files under `frontend/`) runs
+  `.github/workflows/frontend-internal-testing.yml`, which builds this
+  profile and submits it to the `internal` track (`eas.json`
+  `submit.internal`, `releaseStatus: completed`). It also has a manual
+  `workflow_dispatch`. To go to production, **promote the baked release in
+  Play Console** (internal testing → production) rather than rebuilding; the
+  manual `frontend-store-submit.yml` is the alternative that builds fresh and
+  uploads a _draft_ to the production track. Not wired for iOS yet.
 
 `EXPO_PUBLIC_API_BASE_URL` / `EXPO_PUBLIC_HANKO_API_URL` are set as EAS
 environment variables (`eas env:list`), not read from `.env` — EAS Build
