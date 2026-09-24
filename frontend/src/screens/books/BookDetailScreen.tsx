@@ -5,13 +5,19 @@ import type {
 import { useNavigation } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import type { ReadingStatus } from '../../api/types';
+import type { BookLibraryLink, ReadingStatus } from '../../api/types';
 import { BookCover } from '../../components/BookCover';
 import { StarRating } from '../../components/StarRating';
 import { ErrorRetry, LoadingScreen } from '../../components/StatusViews';
-import { useBook, useBookStatuses, useSetBookStatus } from '../../hooks/queries';
+import {
+  useBook,
+  useBookLibraryLink,
+  useBookStatuses,
+  useMyLibrarySystem,
+  useSetBookStatus,
+} from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookDetail'>;
@@ -30,6 +36,9 @@ export function BookDetailScreen({ route }: Props) {
   const book = useBook(bookId);
   const statuses = useBookStatuses();
   const setStatus = useSetBookStatus();
+  const myLibrary = useMyLibrarySystem();
+  const library = myLibrary.data?.library_system ?? null;
+  const libraryLink = useBookLibraryLink(bookId, library?.id);
 
   const myStatus = useMemo(
     () => statuses.data?.find((s) => s.book_id === bookId) ?? null,
@@ -128,16 +137,69 @@ export function BookDetailScreen({ route }: Props) {
         <Text style={styles.recommendButtonText}>Recommend to a friend</Text>
       </Pressable>
 
+      {myLibrary.isSuccess && (
+        <LibraryButton
+          libraryName={library?.name ?? null}
+          loading={!!library && libraryLink.isLoading}
+          link={libraryLink.data ?? null}
+          onChoose={() => navigation.navigate('ChooseLibrary')}
+        />
+      )}
+
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Coming soon</Text>
-        <View style={styles.disabledRow}>
-          <Text style={styles.disabledText}>Find at your library</Text>
-        </View>
         <View style={styles.disabledRow}>
           <Text style={styles.disabledText}>Buy a copy</Text>
         </View>
       </View>
     </ScrollView>
+  );
+}
+
+/** "Get it at your library": the book's record when the catalog has it, a
+ * catalog search otherwise, or a prompt to pick a library first. */
+function LibraryButton({
+  libraryName,
+  loading,
+  link,
+  onChoose,
+}: {
+  libraryName: string | null;
+  loading: boolean;
+  link: BookLibraryLink | null;
+  onChoose: () => void;
+}) {
+  if (!libraryName) {
+    return (
+      <Pressable style={styles.libraryButton} onPress={onChoose}>
+        <Text style={styles.libraryButtonText}>Choose your library to find this book</Text>
+      </Pressable>
+    );
+  }
+  if (loading) {
+    return (
+      <View style={styles.libraryButton}>
+        <Text style={styles.libraryHint}>Checking {libraryName}…</Text>
+      </View>
+    );
+  }
+  // Lookup failed at the HTTP level (link null): nothing to open, but don't hide the row.
+  if (!link) {
+    return (
+      <Pressable style={styles.libraryButton} onPress={onChoose}>
+        <Text style={styles.libraryHint}>Couldn't check {libraryName} · change library</Text>
+      </Pressable>
+    );
+  }
+  const label = link.found
+    ? `Get it at ${libraryName}`
+    : link.lookup_failed
+      ? `Search ${libraryName}'s catalog`
+      : `Not found at ${libraryName} · search anyway`;
+  return (
+    <Pressable style={styles.libraryButton} onPress={() => void Linking.openURL(link.url)}>
+      <Text style={styles.libraryButtonText}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -170,6 +232,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   recommendButtonText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  libraryButton: {
+    borderWidth: 1,
+    borderColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  libraryButtonText: { color: '#3b6e5e', fontWeight: '600', fontSize: 15 },
+  libraryHint: { color: '#918a78', fontSize: 14 },
   disabledRow: {
     borderWidth: 1,
     borderColor: '#e5e1d8',

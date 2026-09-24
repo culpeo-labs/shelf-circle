@@ -25,6 +25,7 @@ export type RootStackParamList = {
   AcceptInvite: { token: string };
   FriendProfile: { userId: string; displayName: string };
   EditProfile: undefined;
+  ChooseLibrary: undefined;
 };
 
 export type MainTabParamList = {

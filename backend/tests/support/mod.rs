@@ -22,6 +22,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use shelf_circle_backend::auth::HankoAuth;
+use shelf_circle_backend::catalogs::Catalogs;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
 
@@ -178,12 +179,16 @@ pub struct TestApp {
     // Kept alive for the app's lifetime — dropping it would stop answering
     // JWKS requests out from under a still-running HankoAuth JWKS cache.
     _jwks_server: MockServer,
+    /// Stands in for the BiblioCommons gateway; tests mount their own mocks.
+    #[allow(dead_code)]
+    pub catalog_server: MockServer,
 }
 
 impl TestApp {
     pub async fn new() -> Self {
         let db = TestDb::new().await;
         let jwks_server = mock_jwks_server().await;
+        let catalog_server = MockServer::start().await;
 
         let auth = HankoAuth::new(
             Some(format!("{}/.well-known/jwks.json", jwks_server.uri())),
@@ -206,12 +211,16 @@ impl TestApp {
                 )
                 .expect("test storage config"),
             )),
+            catalogs: std::sync::Arc::new(Catalogs::with_biblio_commons_gateway(
+                catalog_server.uri(),
+            )),
         };
 
         Self {
             router: shelf_circle_backend::app(state),
             db,
             _jwks_server: jwks_server,
+            catalog_server,
         }
     }
 

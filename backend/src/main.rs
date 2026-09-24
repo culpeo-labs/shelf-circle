@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 use shelf_circle_backend::auth::HankoAuth;
+use shelf_circle_backend::catalogs::Catalogs;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
 use shelf_circle_backend::storage::AvatarStorage;
@@ -37,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         providers: Arc::new(BookProviders::from_env()),
         auth,
         storage: AvatarStorage::from_env()?.map(Arc::new),
+        catalogs: Arc::new(Catalogs::from_env()),
     };
 
     let app = app(state);

@@ -5,12 +5,13 @@ import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/AuthContext';
 import { Avatar } from '../../components/Avatar';
-import { useUpdateMe } from '../../hooks/queries';
+import { useMyLibrarySystem, useUpdateMe } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
 export function MeScreen() {
   const { user, signOut } = useAuth();
   const updateMe = useUpdateMe();
+  const myLibrary = useMyLibrarySystem();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   if (!user) return null;
 
@@ -24,6 +25,12 @@ export function MeScreen() {
       </Pressable>
 
       <View style={styles.section}>
+        <Pressable onPress={() => navigation.navigate('ChooseLibrary')}>
+          <Row
+            label="My library"
+            value={`${myLibrary.data?.library_system?.name ?? 'Not set'}  ›`}
+          />
+        </Pressable>
         <Row label="Locale" value={user.locale} />
         <Row label="Member since" value={new Date(user.created_at).toLocaleDateString()} />
       </View>

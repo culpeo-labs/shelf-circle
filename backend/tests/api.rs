@@ -20,6 +20,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use support::{get_request, json_request, send, TestApp};
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, ResponseTemplate};
 
 #[tokio::test]
 async fn health_check_does_not_require_auth() {
@@ -1036,6 +1038,122 @@ async fn profile_edit_display_name_and_avatar() {
     assert_eq!(me["avatar_url"], avatar_url, "absent field leaves it alone");
     let (_, me) = send(&app.router, patch(&token_a, json!({ "avatar_url": null }))).await;
     assert!(me["avatar_url"].is_null(), "null removes it");
+}
+
+/// Pick a library system, then get a per-book link: the catalog's record page
+/// when it has one of the book's ISBNs, a title-search link when it doesn't or
+/// can't be reached (never an error), and a 400 until a library is chosen.
+#[tokio::test]
+async fn library_link_uses_isbn_lookup_with_search_fallback() {
+    let app = TestApp::new().await;
+    let (token, _id) = onboard(&app, "hanko|a", "alice").await;
+
+    let (status, systems) = send(&app.router, get_request("/library-systems", Some(&token))).await;
+    assert_eq!(status, StatusCode::OK);
+    let ids: Vec<_> = systems
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["seattle", "kcls"]);
+
+    // Book with an ISBN-13 the catalog knows, one it doesn't, and one w/o ISBNs.
+    let resolve = |source_id: &str, isbn: Value| {
+        let mut body = normalized_book(source_id, source_id, "Ed");
+        body["isbn_13"] = isbn;
+        body["canonical_title"] = json!("Project Hail Mary");
+        body["primary_author"] = json!("Andy Weir");
+        json_request("POST", "/books/resolve", Some(&token), body)
+    };
+    let (_, known) = send(&app.router, resolve("OL1W", json!("978-0-593-13520-4"))).await;
+    let (_, unknown) = send(&app.router, resolve("OL2W", json!("9781234567897"))).await;
+    let (_, no_isbn) = send(&app.router, resolve("OL3W", json!(null))).await;
+    let link_of = |book: &Value| format!("/books/{}/library-link", book["id"].as_str().unwrap());
+
+    // No library chosen yet.
+    let (status, _) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Choosing: unknown ids rejected, valid ones stored and readable.
+    let put = |body: Value| json_request("PUT", "/me/library-system", Some(&token), body);
+    let (status, _) = send(&app.router, put(json!({ "library_system": "atlantis" }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, mine) = send(&app.router, put(json!({ "library_system": "seattle" }))).await;
+    assert_eq!(status, StatusCode::OK, "body: {mine}");
+    assert_eq!(mine["library_system"]["name"], "Seattle Public Library");
+    let (_, mine) = send(&app.router, get_request("/me/library-system", Some(&token))).await;
+    assert_eq!(mine["library_system"]["id"], "seattle");
+
+    let bibs = |id: &str, isbn: &str| {
+        json!({ "entities": { "bibs": { id: {
+            "id": id,
+            "briefInfo": { "format": "BK", "isbns": [isbn] }
+        } } } })
+    };
+    let gateway = "/v2/libraries/seattle/bibs/search";
+    Mock::given(method("GET"))
+        .and(path(gateway))
+        .and(query_param("query", "9780593135204"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(bibs("S30C1", "9780593135204")))
+        .mount(&app.catalog_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(gateway))
+        .and(query_param("query", "9781234567897"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "entities": {} })))
+        .mount(&app.catalog_server)
+        .await;
+
+    // Found by ISBN (hyphens normalized) → the record page.
+    let (status, link) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
+    assert_eq!(status, StatusCode::OK, "body: {link}");
+    assert_eq!(link["found"], true);
+    assert_eq!(link["lookup_failed"], false);
+    assert_eq!(
+        link["url"],
+        "https://seattle.bibliocommons.com/v2/record/S30C1"
+    );
+    assert_eq!(link["library"]["id"], "seattle");
+
+    // Catalog doesn't have it, or we have no ISBN → title search, not an error.
+    for book in [&unknown, &no_isbn] {
+        let (status, link) = send(&app.router, get_request(&link_of(book), Some(&token))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(link["found"], false);
+        assert_eq!(link["lookup_failed"], false);
+        assert_eq!(
+            link["url"],
+            "https://seattle.bibliocommons.com/v2/search?query=Project%20Hail%20Mary%20Andy%20Weir&searchType=smart"
+        );
+    }
+
+    // Catalog down → still 200 with a usable link, flagged as a failed lookup.
+    let (status, _) = send(&app.router, put(json!({ "library_system": "kcls" }))).await;
+    assert_eq!(status, StatusCode::OK);
+    Mock::given(method("GET"))
+        .and(path("/v2/libraries/kcls/bibs/search"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&app.catalog_server)
+        .await;
+    let (status, link) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(link["found"], false);
+    assert_eq!(link["lookup_failed"], true);
+    assert!(link["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://kcls.bibliocommons.com/v2/search?"));
+
+    // Clearing the choice goes back to 400; unknown book is 404.
+    let (_, mine) = send(&app.router, put(json!({ "library_system": null }))).await;
+    assert!(mine["library_system"].is_null());
+    let (status, _) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (_, _) = send(&app.router, put(json!({ "library_system": "seattle" }))).await;
+    let missing = format!("/books/{}/library-link", Uuid::new_v4());
+    let (status, _) = send(&app.router, get_request(&missing, Some(&token))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// The self-accept rejection happens *after* the token is atomically claimed
