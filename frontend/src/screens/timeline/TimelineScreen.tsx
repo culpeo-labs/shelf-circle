@@ -1,6 +1,6 @@
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
-import React, { useMemo } from 'react';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import React, { useCallback, useMemo } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
@@ -25,6 +25,13 @@ export function TimelineScreen() {
     hasNextPage,
     isFetchingNextPage,
   } = useFeed();
+
+  // Same reason as the recommendations tab: refresh whenever it's shown.
+  useFocusEffect(
+    useCallback(() => {
+      void refetch();
+    }, [refetch]),
+  );
 
   const items = useMemo(() => data?.pages.flat() ?? [], [data]);
   // Duplicate created_at timestamps across pages are possible; de-dupe by id.

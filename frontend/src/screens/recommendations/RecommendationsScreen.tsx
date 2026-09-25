@@ -1,7 +1,7 @@
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import React, { useCallback } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
 import type { Recommendation } from '../../api/types';
@@ -15,13 +15,16 @@ import { relativeTime } from '../../utils/time';
 
 export function RecommendationsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { data, isLoading, isError, error, refetch } = useRecommendationsInbox();
+  const { data, isLoading, isError, error, refetch, isRefetching } = useRecommendationsInbox();
   const { markSeen } = useRecommendationsBadge();
 
   useFocusEffect(
     useCallback(() => {
+      // Refetch every time the tab is shown: the screen stays mounted, so
+      // without this a recommendation sent while you were elsewhere never shows.
+      void refetch();
       void markSeen();
-    }, [markSeen]),
+    }, [markSeen, refetch]),
   );
 
   if (isLoading) return <LoadingScreen />;
@@ -42,6 +45,7 @@ export function RecommendationsScreen() {
       data={data}
       keyExtractor={(item) => item.id}
       contentContainerStyle={styles.list}
+      refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />}
       renderItem={({ item }) => (
         <RecommendationRow
           item={item}
