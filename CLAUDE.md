@@ -29,7 +29,7 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   extractors + `ensure_self`. See **Auth** below.
 - `src/catalogs/` — "get it at your library" plugins. `mod.rs` = the
   `SYSTEMS` registry (`LibrarySystem { id, name, kind }`: Seattle Public
-  Library `seattle`, King County `kcls`), `Catalogs` (ISBN lookup with a 1h
+  Library `seattle`, King County `kcls`), `Catalogs` (`find_book` by title/author with ISBN preference, 1h
   in-process cache) and `search_url`; `biblio_commons.rs` = the only `Kind`
   so far. See **Library catalogs**.
 - `src/storage.rs` — `AvatarStorage`: Azure Blob avatar uploads. Mints a
@@ -71,7 +71,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   false` — persists the same flag on the row itself, for a "logged as
   backlog" badge; see **Timeline / feed**), `0009_share_shelves.sql`
   (`users.share_shelves boolean not null default false`), `0010_library_system.sql`
-  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK). UUID default is
+  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK),
+  `0011_book_description.sql` (`books.description` + `description_checked_at`; see **Book descriptions**). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -186,17 +187,42 @@ but has no routes yet.
 - User picks a library system (`GET /library-systems`, `GET|PUT
   /me/library-system`); `GET /books/{id}/library-link` then returns
   `{library, found, lookup_failed, url}`: `url` is the catalog **record page**
-  when a search of the catalog by the book's ISBNs (ISBN-13s first, max 4)
-  finds an edition carrying that ISBN, else a **title+author catalog search**.
+  when the catalog has the *work*, else a **title+author catalog search**.
   Always 200 with a usable `url` — a slow/down catalog only sets
   `lookup_failed` (400 only if no library is chosen). Named `library_systems`
   in code to avoid confusion with `routes/library.rs` (a user's bookshelves).
+- **Match by work (title + author), not by ISBN.** We store one representative
+  edition per book (Open Library's first English one, often a UK/odd printing)
+  and libraries hold other printings: ISBN-first matched **1 of 18** popular
+  titles in Seattle's catalog; title+author matched 18/18. So a lookup is: search
+  `main title + author`, accept records that are the same work
+  (`catalogs/matching.rs`: normalized title — subtitle-tolerant but two main
+  titles never fuzzy-match each other, so "Dune" ≠ "Dune Messiah" — plus author
+  surname and compatible language), preferring the exact edition (one of our
+  ISBNs), then a record in the book's language (a preference, not a filter),
+  then plain book > large print > ebook > other. Ranking, in order: record
+  titled like the book **as the app shows it** (`books.canonical_title`) →
+  exact edition (our ISBN) → the saved edition's language → format. Title-first
+  because the saved edition's language is arbitrary (Open Library's first
+  English one) while the displayed title is what the user actually picked; an
+  English-first rule linked the English translation of "Cien años de soledad"
+  even though Seattle holds the Spanish edition the user was looking at. Only
+  if nothing matches are up to 2 ISBNs tried on their own.
+- **Translations:** Open Library files every translation under one work, so a
+  book can be titled "Cien años de soledad" while its saved edition is the
+  English "One Hundred Years of Solitude" (and the catalog lists each under its
+  own title). The lookup therefore searches under every distinct title we have
+  (`book_editions.title`, max 3 searches, pooled), and a record matches under
+  any of them. Only the primary title's search failing is fatal
+  (`lookup_failed`); an alternate's failure just means fewer candidates.
+  Limits: authorless/ISBN-less junk works (e.g. Open Library's bare "100 años de
+  soledad") can't be verified and fall back to the search link.
 - **Adding a library** on an existing kind = one `SYSTEMS` entry (id is stored
   on users — never rename). **New kind of catalog** (Libby/OverDrive, Sierra…)
   = a module in `catalogs/`, a `Kind` variant, and an arm in
-  `Catalogs::lookup_isbn` / `search_url`; each kind only answers "record URL
-  for this ISBN".
-- BiblioCommons plugin: `GET {gateway}/v2/libraries/{slug}/bibs/search?query=<isbn>
+  `Catalogs::find_book` / `search_url`; each kind only answers "record URL
+  for this book" (reusing `matching.rs` for the same-work test).
+- BiblioCommons plugin: `GET {gateway}/v2/libraries/{slug}/bibs/search?query=<title author or isbn>
   &searchType=smart` (unauthenticated, **unofficial** — the endpoint the
   libraries' own sites use; verified live for `seattle` and `kcls`), record link
   `https://{host}/v2/record/{bib id}`. Note `slug` is the library's BiblioCommons
@@ -214,6 +240,22 @@ but has no routes yet.
   the user's own shelves with book details. `shelf` maps to a **static** SQL
   predicate (no user input in query text). Off-platform books: `/books/resolve`
   (manual body, `source:"manual"`) then `PUT /book-statuses` finished + rating.
+
+### Book descriptions
+
+- `books.description` (plain text, shown on the book page only when present).
+  Captured at resolve: Open Library work `description` (a string or `{type,
+  value}`) / Google Books `volumeInfo.description` (HTML), both run through
+  `providers/text.rs` (`\r\n`, markdown emphasis/links, `----------` source
+  footers, HTML tags/entities, 4000-char cap). `ResolvedBook.description` is
+  optional so manual entries/older clients needn't send it. Re-resolving an
+  existing book fills a missing description but never overwrites one.
+- **Lazy backfill** for books saved before this existed: `GET /books/{id}` with
+  no description and a provider id fetches one (4s timeout, best-effort — a
+  failing provider never breaks the page). `description_checked_at` is set when
+  a lookup *succeeds* (even with no description found) so a book with none at
+  the source isn't re-fetched for 30 days; a failed/timed-out lookup isn't
+  recorded and retries next view. Manual books (no provider id) never fetch.
 
 ### Book search / resolve
 

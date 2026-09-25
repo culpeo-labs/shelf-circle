@@ -1041,10 +1041,11 @@ async fn profile_edit_display_name_and_avatar() {
 }
 
 /// Pick a library system, then get a per-book link: the catalog's record page
-/// when it has one of the book's ISBNs, a title-search link when it doesn't or
-/// can't be reached (never an error), and a 400 until a library is chosen.
+/// when it has the *work* (matched by title + author, whatever edition/ISBN we
+/// happen to store), a title-search link when it doesn't or can't be reached
+/// (never an error), and a 400 until a library is chosen.
 #[tokio::test]
-async fn library_link_uses_isbn_lookup_with_search_fallback() {
+async fn library_link_matches_the_work_with_search_fallback() {
     let app = TestApp::new().await;
     let (token, _id) = onboard(&app, "hanko|a", "alice").await;
 
@@ -1058,17 +1059,35 @@ async fn library_link_uses_isbn_lookup_with_search_fallback() {
         .collect();
     assert_eq!(ids, ["seattle", "kcls"]);
 
-    // Book with an ISBN-13 the catalog knows, one it doesn't, and one w/o ISBNs.
-    let resolve = |source_id: &str, isbn: Value| {
+    let resolve = |source_id: &str, title: &str, isbn: Value| {
         let mut body = normalized_book(source_id, source_id, "Ed");
         body["isbn_13"] = isbn;
-        body["canonical_title"] = json!("Project Hail Mary");
+        body["canonical_title"] = json!(title);
         body["primary_author"] = json!("Andy Weir");
         json_request("POST", "/books/resolve", Some(&token), body)
     };
-    let (_, known) = send(&app.router, resolve("OL1W", json!("978-0-593-13520-4"))).await;
-    let (_, unknown) = send(&app.router, resolve("OL2W", json!("9781234567897"))).await;
-    let (_, no_isbn) = send(&app.router, resolve("OL3W", json!(null))).await;
+    // Stored ISBN is NOT the one the library holds — the common case.
+    let (_, known) = send(
+        &app.router,
+        resolve("OL1W", "Project Hail Mary", json!("9781529000000")),
+    )
+    .await;
+    let (_, no_isbn) = send(
+        &app.router,
+        resolve("OL2W", "Project Hail Mary", json!(null)),
+    )
+    .await;
+    // Retitled in the catalog: only the ISBN can find it.
+    let (_, retitled) = send(
+        &app.router,
+        resolve("OL3W", "Hail Mary Project", json!("978-0-593-13520-4")),
+    )
+    .await;
+    let (_, missing) = send(
+        &app.router,
+        resolve("OL4W", "Unfindable Tome", json!("9781234567897")),
+    )
+    .await;
     let link_of = |book: &Value| format!("/books/{}/library-link", book["id"].as_str().unwrap());
 
     // No library chosen yet.
@@ -1085,48 +1104,161 @@ async fn library_link_uses_isbn_lookup_with_search_fallback() {
     let (_, mine) = send(&app.router, get_request("/me/library-system", Some(&token))).await;
     assert_eq!(mine["library_system"]["id"], "seattle");
 
-    let bibs = |id: &str, isbn: &str| {
-        json!({ "entities": { "bibs": { id: {
-            "id": id,
-            "briefInfo": { "format": "BK", "isbns": [isbn] }
-        } } } })
+    let bib = |id: &str, format: &str, title: &str, authors: Value, isbn: &str, lang: &str| {
+        json!({ "id": id, "briefInfo": {
+            "format": format, "title": title, "authors": authors,
+            "isbns": [isbn], "primaryLanguage": lang } })
+    };
+    let results = |bibs: Vec<Value>| {
+        let map: serde_json::Map<String, Value> = bibs
+            .into_iter()
+            .map(|b| (b["id"].as_str().unwrap().to_string(), b))
+            .collect();
+        ResponseTemplate::new(200).set_body_json(json!({ "entities": { "bibs": map } }))
     };
     let gateway = "/v2/libraries/seattle/bibs/search";
-    Mock::given(method("GET"))
-        .and(path(gateway))
-        .and(query_param("query", "9780593135204"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(bibs("S30C1", "9780593135204")))
+    let on_query = |q: &str| {
+        Mock::given(method("GET"))
+            .and(path(gateway))
+            .and(query_param("query", q))
+    };
+    // Title+author search: the right work in several formats/languages, plus noise.
+    on_query("Project Hail Mary Andy Weir")
+        .respond_with(results(vec![
+            bib(
+                "S30DVD",
+                "DVD",
+                "PROJECT HAIL MARY (DVD)",
+                json!([]),
+                "",
+                "eng",
+            ),
+            bib(
+                "S30EB",
+                "EBOOK",
+                "Project Hail Mary",
+                json!(["Weir, Andy"]),
+                "9780593135211",
+                "eng",
+            ),
+            bib(
+                "S30BK",
+                "BK",
+                "Project Hail Mary",
+                json!(["Weir, Andy"]),
+                "9780593135204",
+                "eng",
+            ),
+            bib(
+                "S30ES",
+                "BK",
+                "Proyecto Hail Mary",
+                json!(["Weir, Andy"]),
+                "9788466000000",
+                "spa",
+            ),
+        ]))
         .mount(&app.catalog_server)
         .await;
-    Mock::given(method("GET"))
-        .and(path(gateway))
-        .and(query_param("query", "9781234567897"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "entities": {} })))
+    on_query("Hail Mary Project Andy Weir")
+        .respond_with(results(vec![]))
+        .mount(&app.catalog_server)
+        .await;
+    on_query("9780593135204")
+        .respond_with(results(vec![bib(
+            "S30RT",
+            "BK",
+            "Project Hail Mary",
+            json!(["Weir, Andy"]),
+            "9780593135204",
+            "eng",
+        )]))
+        .mount(&app.catalog_server)
+        .await;
+    on_query("Unfindable Tome Andy Weir")
+        .respond_with(results(vec![]))
+        .mount(&app.catalog_server)
+        .await;
+    on_query("9781234567897")
+        .respond_with(results(vec![]))
         .mount(&app.catalog_server)
         .await;
 
-    // Found by ISBN (hyphens normalized) → the record page.
-    let (status, link) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
-    assert_eq!(status, StatusCode::OK, "body: {link}");
-    assert_eq!(link["found"], true);
-    assert_eq!(link["lookup_failed"], false);
-    assert_eq!(
-        link["url"],
-        "https://seattle.bibliocommons.com/v2/record/S30C1"
-    );
-    assert_eq!(link["library"]["id"], "seattle");
-
-    // Catalog doesn't have it, or we have no ISBN → title search, not an error.
-    for book in [&unknown, &no_isbn] {
+    // Found by title+author despite the ISBN mismatch → the plain English book.
+    // No ISBN on file at all works too.
+    for book in [&known, &no_isbn] {
         let (status, link) = send(&app.router, get_request(&link_of(book), Some(&token))).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(link["found"], false);
+        assert_eq!(status, StatusCode::OK, "body: {link}");
+        assert_eq!(link["found"], true);
         assert_eq!(link["lookup_failed"], false);
         assert_eq!(
             link["url"],
-            "https://seattle.bibliocommons.com/v2/search?query=Project%20Hail%20Mary%20Andy%20Weir&searchType=smart"
+            "https://seattle.bibliocommons.com/v2/record/S30BK"
         );
+        assert_eq!(link["library"]["id"], "seattle");
     }
+
+    // Retitled in the catalog: title search misses, the ISBN fallback finds it.
+    let (_, link) = send(&app.router, get_request(&link_of(&retitled), Some(&token))).await;
+    assert_eq!(link["found"], true, "body: {link}");
+    assert_eq!(
+        link["url"],
+        "https://seattle.bibliocommons.com/v2/record/S30RT"
+    );
+
+    // Catalog doesn't have it → title search, not an error.
+    let (status, link) = send(&app.router, get_request(&link_of(&missing), Some(&token))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(link["found"], false);
+    assert_eq!(link["lookup_failed"], false);
+    assert_eq!(
+        link["url"],
+        "https://seattle.bibliocommons.com/v2/search?query=Unfindable%20Tome%20Andy%20Weir&searchType=smart"
+    );
+
+    // Translated work: filed (and displayed) under its Spanish title, saved
+    // edition is the English translation. Search under both titles and prefer
+    // the record titled like the book the user sees.
+    let mut translated = normalized_book("OL5W", "OL5W", "One Hundred Years of Solitude");
+    translated["canonical_title"] = json!("Cien años de soledad");
+    translated["primary_author"] = json!("Gabriel García Márquez");
+    let (_, translated) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), translated),
+    )
+    .await;
+    on_query("Cien años de soledad Gabriel García Márquez")
+        .respond_with(results(vec![bib(
+            "S30SP",
+            "BK",
+            "Cien años de soledad",
+            json!(["García Márquez, Gabriel"]),
+            "9788400000000",
+            "spa",
+        )]))
+        .mount(&app.catalog_server)
+        .await;
+    on_query("One Hundred Years of Solitude Gabriel García Márquez")
+        .respond_with(results(vec![bib(
+            "S30EN",
+            "EBOOK",
+            "One Hundred Years of Solitude",
+            json!(["García Márquez, Gabriel"]),
+            "9780060000000",
+            "eng",
+        )]))
+        .mount(&app.catalog_server)
+        .await;
+    let (_, link) = send(
+        &app.router,
+        get_request(&link_of(&translated), Some(&token)),
+    )
+    .await;
+    assert_eq!(link["found"], true, "body: {link}");
+    assert_eq!(
+        link["url"], "https://seattle.bibliocommons.com/v2/record/S30SP",
+        "the Spanish record matches the title shown in the app"
+    );
 
     // Catalog down → still 200 with a usable link, flagged as a failed lookup.
     let (status, _) = send(&app.router, put(json!({ "library_system": "kcls" }))).await;
@@ -1150,10 +1282,65 @@ async fn library_link_uses_isbn_lookup_with_search_fallback() {
     assert!(mine["library_system"].is_null());
     let (status, _) = send(&app.router, get_request(&link_of(&known), Some(&token))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (_, _) = send(&app.router, put(json!({ "library_system": "seattle" }))).await;
-    let missing = format!("/books/{}/library-link", Uuid::new_v4());
-    let (status, _) = send(&app.router, get_request(&missing, Some(&token))).await;
+    send(&app.router, put(json!({ "library_system": "seattle" }))).await;
+    let nonexistent = format!("/books/{}/library-link", Uuid::new_v4());
+    let (status, _) = send(&app.router, get_request(&nonexistent, Some(&token))).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Descriptions ride along on resolve, come back from `GET /books/{id}`, are
+/// null when no source had one, and get filled in (never overwritten) when the
+/// same book is resolved again later.
+#[tokio::test]
+async fn book_descriptions_are_stored_and_filled_in_later() {
+    let app = TestApp::new().await;
+    let (token, _id) = onboard(&app, "hanko|a", "alice").await;
+
+    let resolve = |source_id: &str, description: Value| {
+        let mut body = normalized_book(source_id, source_id, "Ed");
+        body["description"] = description;
+        json_request("POST", "/books/resolve", Some(&token), body)
+    };
+    let get_book = |id: &str| get_request(&format!("/books/{id}"), Some(&token));
+
+    // With a description.
+    let (status, with) = send(&app.router, resolve("OL1W", json!("A story about hunger."))).await;
+    assert_eq!(status, StatusCode::OK, "body: {with}");
+    assert_eq!(with["description"], "A story about hunger.");
+    let (_, fetched) = send(&app.router, get_book(with["id"].as_str().unwrap())).await;
+    assert_eq!(fetched["description"], "A story about hunger.");
+
+    // Without one (and no provider ids that a backfill could ask about).
+    let mut manual = normalized_book("manual-1", "manual-1", "Ed");
+    manual["source"] = json!("manual");
+    manual["open_library_work_id"] = json!(null);
+    let (_, without) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual.clone()),
+    )
+    .await;
+    assert!(without["description"].is_null());
+    let (_, fetched) = send(&app.router, get_book(without["id"].as_str().unwrap())).await;
+    assert!(fetched["description"].is_null());
+
+    // Re-resolving the same edition later, now with a description, fills it in...
+    manual["description"] = json!("Added later.");
+    let (_, again) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual.clone()),
+    )
+    .await;
+    assert_eq!(again["id"], without["id"], "same book");
+    assert_eq!(again["description"], "Added later.");
+
+    // ...but never overwrites an existing one.
+    manual["description"] = json!("Something else entirely.");
+    let (_, third) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual),
+    )
+    .await;
+    assert_eq!(third["description"], "Added later.");
 }
 
 /// The self-accept rejection happens *after* the token is atomically claimed
