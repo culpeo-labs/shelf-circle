@@ -1,21 +1,18 @@
 name: Frontend Internal Testing
-# Every merge to main that changes the app cuts an EAS "production" Android
-# build (AAB, versionCode auto-incremented remotely) and submits it to the
-# Play Store *internal testing* track (eas.json submit.internal). The build
-# waits in the runner so a failed build/submit shows up as a red run here.
+# Manual: cuts an EAS "production" Android build (AAB, versionCode
+# auto-incremented remotely) and submits it to the Play Store *internal testing*
+# track (eas.json submit.internal). Run it from the Actions tab (or
+# `gh workflow run frontend-internal-testing.yml`) once enough changes have
+# landed on main to be worth a build — it deliberately doesn't run on every
+# merge, because EAS's Free plan has a small monthly build quota. It builds
+# whatever main is at when you run it (or pick another ref in the dispatch UI).
+# The build waits in the runner so a failed build/submit shows up as a red run.
 #
 # This is only the bake step. Going to production = promote the already-tested
 # release from internal testing in Play Console (no rebuild, so what ships is
 # exactly what testers ran), or use the manual "Frontend Store Submit"
 # workflow, which builds fresh and uploads a draft to the production track.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "frontend/**"
-      - "!frontend/**/*.md"
-      - ".github/workflows/frontend-internal-testing.yml"
   workflow_dispatch: {}
 # One at a time, in order; never cancel a build that's already in flight.
 concurrency:

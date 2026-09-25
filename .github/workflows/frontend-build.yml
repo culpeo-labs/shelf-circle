@@ -1,17 +1,13 @@
 name: Frontend Build
 
-# Kicks off an EAS "preview" build (installable Android APK + iOS simulator
-# build, no Apple Developer account needed) on every push to main that
-# touches the frontend. Production (signed store builds/submission) is a
-# separate, not-yet-automated step.
+# Manual: kicks off an EAS "preview" build (installable Android APK + iOS
+# simulator build, no Apple Developer account needed). This used to run on every
+# push to main, but that was two EAS builds per merge on top of the
+# Play-internal-testing build (frontend-internal-testing.yml), and it exhausted
+# the Free plan's monthly build quota. Run it from the Actions tab (or
+# `gh workflow run frontend-build.yml`) when you want a preview build.
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "frontend/**"
-      - ".github/workflows/frontend-build.yml"
   workflow_dispatch: {}
 
 concurrency:
