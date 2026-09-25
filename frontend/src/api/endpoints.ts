@@ -9,6 +9,8 @@ import type {
   BookWithEdition,
   CreateRecommendationInput,
   CreateUserInput,
+  Friend,
+  FriendProfile,
   FriendRequest,
   Invite,
   InvitePreview,
@@ -20,7 +22,7 @@ import type {
   FeedItem,
   ReadingGoal,
   ReadingStats,
-  Recommendation,
+  RecommendationItem,
   ResolvedBookInput,
   SetBookStatusInput,
   UpdateMeInput,
@@ -40,10 +42,15 @@ export const createAvatarUpload = () =>
 export const createUser = (input: CreateUserInput) =>
   apiFetch<User>('/users', { method: 'POST', body: input });
 
-export const getUser = (id: UUID) => apiFetch<User>(`/users/${id}`);
-
 /** Everyone the caller is friends with, whichever side created the invite. */
-export const listFriends = () => apiFetch<User[]>('/me/friends');
+export const listFriends = () => apiFetch<Friend[]>('/me/friends');
+
+export const getFriend = (friendshipId: UUID) =>
+  apiFetch<FriendProfile>(`/friends/${friendshipId}`);
+
+/** A friend's shelves — 403 unless they've turned on sharing. */
+export const getFriendLibrary = (friendshipId: UUID, shelf?: LibraryShelf) =>
+  apiFetch<LibraryEntry[]>(`/friends/${friendshipId}/library`, { query: { shelf } });
 
 /** Creates a new invite (share as a QR code or link). Single-use by default;
  * `reusable` makes an "anyone with the link" invite whose joiners you approve. */
@@ -98,10 +105,10 @@ export const getLibrary = (userId: UUID, shelf?: LibraryShelf) =>
   apiFetch<LibraryEntry[]>(`/users/${userId}/library`, { query: { shelf } });
 
 export const createRecommendation = (input: CreateRecommendationInput) =>
-  apiFetch<Recommendation>('/recommendations', { method: 'POST', body: input });
+  apiFetch<unknown>('/recommendations', { method: 'POST', body: input });
 
 export const getRecommendationsInbox = (userId: UUID) =>
-  apiFetch<Recommendation[]>(`/users/${userId}/recommendations/inbox`);
+  apiFetch<RecommendationItem[]>(`/users/${userId}/recommendations/inbox`);
 
 export const getFeed = (userId: UUID, opts: { limit?: number; before?: string } = {}) =>
   apiFetch<FeedItem[]>(`/users/${userId}/feed`, { query: opts });

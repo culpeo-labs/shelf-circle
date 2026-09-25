@@ -36,22 +36,20 @@ export function useLibrary(shelf: LibraryShelf) {
 }
 
 /** A friend's library — the server 403s unless they've turned on sharing. */
-export function useFriendLibrary(userId: UUID | undefined, enabled: boolean) {
+export function useFriendLibrary(friendshipId: UUID | undefined, enabled: boolean) {
   return useQuery({
-    queryKey: ['library', userId, 'all'],
-    queryFn: () => api.getLibrary(userId!, 'all'),
-    enabled: !!userId && enabled,
+    queryKey: ['friend-library', friendshipId, 'all'],
+    queryFn: () => api.getFriendLibrary(friendshipId!, 'all'),
+    enabled: !!friendshipId && enabled,
   });
 }
 
 export function useUpdateMe() {
   const { updateUser } = useAuth();
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateMeInput) => api.updateMe(input),
     onSuccess: async (updated) => {
       await updateUser(updated);
-      void queryClient.invalidateQueries({ queryKey: ['user', updated.id] });
     },
   });
 }
@@ -147,11 +145,12 @@ export function useBook(bookId: UUID | undefined) {
   });
 }
 
-export function useUser(userId: UUID | undefined) {
+/** A friend's profile, addressed by friendship. */
+export function useFriendProfile(friendshipId: UUID | undefined) {
   return useQuery({
-    queryKey: ['user', userId],
-    queryFn: () => api.getUser(userId!),
-    enabled: !!userId,
+    queryKey: ['friend', friendshipId],
+    queryFn: () => api.getFriend(friendshipId!),
+    enabled: !!friendshipId,
   });
 }
 

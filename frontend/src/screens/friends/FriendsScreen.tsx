@@ -40,7 +40,7 @@ export function FriendsScreen() {
       ) : (
         <FlatList
           data={friends}
-          keyExtractor={(f) => f.id}
+          keyExtractor={(f) => f.friendship_id}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={() => void refetch()} />
@@ -50,7 +50,7 @@ export function FriendsScreen() {
               style={styles.row}
               onPress={() =>
                 navigation.navigate('FriendProfile', {
-                  userId: item.id,
+                  friendshipId: item.friendship_id,
                   displayName: item.display_name,
                 })
               }

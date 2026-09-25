@@ -55,9 +55,10 @@ async fn update_me(
     // Only URLs this API minted for the caller (see `AvatarStorage`) — never an
     // arbitrary external URL, and never another user's blob. `null` clears it.
     if let Some(Some(url)) = &input.avatar_url {
+        let key = avatar_key(&pool, me.id).await?;
         let ok = storage
             .as_ref()
-            .is_some_and(|s| s.owns_avatar_url(me.id, url));
+            .is_some_and(|s| s.owns_avatar_url(key, url));
         if !ok {
             return Err(ApiError::BadRequest(
                 "avatar_url must come from POST /me/avatar-upload".into(),
@@ -91,15 +92,26 @@ async fn update_me(
 /// Step 1 of changing the avatar: a short-lived, write-only URL to `PUT` a JPEG
 /// to. 503 when the server has no Blob Storage configured.
 async fn avatar_upload(
+    State(pool): State<PgPool>,
     State(storage): State<Option<Arc<AvatarStorage>>>,
     CurrentUser(me): CurrentUser,
 ) -> ApiResult<Json<AvatarUploadTicket>> {
     let storage =
         storage.ok_or_else(|| ApiError::Unavailable("avatar uploads aren't configured".into()))?;
-    let up = storage.create_upload(me.id);
+    let up = storage.create_upload(avatar_key(&pool, me.id).await?);
     Ok(Json(AvatarUploadTicket {
         upload_url: up.upload_url,
         avatar_url: up.avatar_url,
         expires_at: up.expires_at,
     }))
+}
+
+/// The random key photos are stored under — not the user id (see migration 0014).
+async fn avatar_key(pool: &PgPool, user_id: uuid::Uuid) -> ApiResult<uuid::Uuid> {
+    Ok(
+        sqlx::query_scalar::<_, uuid::Uuid>("select avatar_key from users where id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?,
+    )
 }

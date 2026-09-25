@@ -55,9 +55,9 @@ export function AddFriendScreen() {
   const { friends, isSuccess } = useFriends({ pollMs: 4000 });
   const [knownIds, setKnownIds] = useState<Set<string> | null>(null);
   useEffect(() => {
-    if (isSuccess) setKnownIds((prev) => prev ?? new Set(friends.map((f) => f.id)));
+    if (isSuccess) setKnownIds((prev) => prev ?? new Set(friends.map((f) => f.friendship_id)));
   }, [isSuccess, friends]);
-  const newFriend = knownIds ? friends.find((f) => !knownIds.has(f.id)) : undefined;
+  const newFriend = knownIds ? friends.find((f) => !knownIds.has(f.friendship_id)) : undefined;
 
   const token = reusable ? shownReusable?.token : createInvite.data?.token;
   const inviteUrl = token ? buildInviteUrl(token) : null;

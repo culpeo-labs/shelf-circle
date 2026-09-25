@@ -29,7 +29,8 @@ struct FeedRow {
     id: Uuid,
     created_at: DateTime<Utc>,
     status: ReadingStatus,
-    actor_id: Uuid,
+    actor_friendship_id: Option<Uuid>,
+    actor_is_me: bool,
     actor_handle: String,
     actor_display_name: String,
     actor_avatar_url: Option<String>,
@@ -41,7 +42,10 @@ struct FeedRow {
 
 #[derive(Debug, Serialize)]
 pub struct FeedActor {
-    pub id: Uuid,
+    /// The friendship with this person — how the app refers to a friend. `None`
+    /// for your own events. Never a user id.
+    pub friendship_id: Option<Uuid>,
+    pub is_me: bool,
     pub handle: String,
     pub display_name: String,
     pub avatar_url: Option<String>,
@@ -93,7 +97,8 @@ async fn user_feed(
             ae.id                  as id,
             ae.created_at          as created_at,
             ae.status              as status,
-            u.id                   as actor_id,
+            f.id                   as actor_friendship_id,
+            (u.id = $1)            as actor_is_me,
             u.handle               as actor_handle,
             u.display_name         as actor_display_name,
             u.avatar_url           as actor_avatar_url,
@@ -103,6 +108,9 @@ async fn user_feed(
             b.cover_image_url      as book_cover_image_url
         from activity_events ae
         join users u on u.id = ae.actor_user_id
+        left join friendships f
+            on (f.user_a_id = ae.actor_user_id and f.user_b_id = $1)
+            or (f.user_b_id = ae.actor_user_id and f.user_a_id = $1)
         join books b on b.id = ae.book_id
         where (
                 ae.actor_user_id = $1
@@ -131,7 +139,8 @@ async fn user_feed(
             status: r.status,
             verb: verb_for(r.status),
             actor: FeedActor {
-                id: r.actor_id,
+                friendship_id: r.actor_friendship_id,
+                is_me: r.actor_is_me,
                 handle: r.actor_handle,
                 display_name: r.actor_display_name,
                 avatar_url: r.actor_avatar_url,

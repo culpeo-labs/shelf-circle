@@ -15,7 +15,7 @@ import {
   TextInput,
 } from 'react-native';
 
-import type { User } from '../../api/types';
+import type { Friend } from '../../api/types';
 import { useCreateRecommendation, useFriends } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,7 +28,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'RecommendToFriend'>;
 export function RecommendToFriendScreen({ route, navigation }: Props) {
   const { bookId } = route.params;
   const { friends } = useFriends();
-  const [selected, setSelected] = useState<User | null>(null);
+  const [selected, setSelected] = useState<Friend | null>(null);
   const [note, setNote] = useState('');
   const [sent, setSent] = useState(false);
   const createRecommendation = useCreateRecommendation();
@@ -39,7 +39,7 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
     setSent(true);
     try {
       await createRecommendation.mutateAsync({
-        to_user_id: selected.id,
+        to_friendship_id: selected.friendship_id,
         book_id: bookId,
         note: note.trim() || undefined,
       });
@@ -65,11 +65,14 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
     >
       <FlatList
         data={friends}
-        keyExtractor={(f) => f.id}
+        keyExtractor={(f) => f.friendship_id}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <Pressable
-            style={[styles.friendRow, selected?.id === item.id && styles.friendRowActive]}
+            style={[
+              styles.friendRow,
+              selected?.friendship_id === item.friendship_id && styles.friendRowActive,
+            ]}
             onPress={() => setSelected(item)}
           >
             <Avatar url={item.avatar_url} name={item.display_name} size={32} />

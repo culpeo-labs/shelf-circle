@@ -23,7 +23,7 @@ export type RootStackParamList = {
   AddFriend: undefined;
   ScanInvite: undefined;
   AcceptInvite: { token: string };
-  FriendProfile: { userId: string; displayName: string };
+  FriendProfile: { friendshipId: string; displayName: string };
   EditProfile: undefined;
   ChooseLibrary: undefined;
 };

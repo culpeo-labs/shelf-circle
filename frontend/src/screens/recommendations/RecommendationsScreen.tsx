@@ -4,11 +4,11 @@ import React, { useCallback } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
-import type { Recommendation } from '../../api/types';
+import type { RecommendationItem } from '../../api/types';
 import { Avatar } from '../../components/Avatar';
 import { BookCover } from '../../components/BookCover';
 import { EmptyState, ErrorRetry, LoadingScreen } from '../../components/StatusViews';
-import { useBook, useRecommendationsInbox, useUser } from '../../hooks/queries';
+import { useBook, useRecommendationsInbox } from '../../hooks/queries';
 import { useRecommendationsBadge } from '../../hooks/useRecommendationsBadge';
 import type { RootStackParamList } from '../../navigation/types';
 import { relativeTime } from '../../utils/time';
@@ -56,23 +56,19 @@ export function RecommendationsScreen() {
   );
 }
 
-function RecommendationRow({ item, onPress }: { item: Recommendation; onPress: () => void }) {
-  const sender = useUser(item.from_user_id);
+function RecommendationRow({ item, onPress }: { item: RecommendationItem; onPress: () => void }) {
+  const sender = item.from;
   const book = useBook(item.book_id);
 
   return (
     <Pressable style={styles.row} onPress={onPress}>
-      <Avatar
-        url={sender.data?.avatar_url ?? null}
-        name={sender.data?.display_name ?? '?'}
-        size={36}
-      />
+      <Avatar url={sender.avatar_url} name={sender.display_name} size={36} />
       <BookCover
         url={book.data?.cover_image_url ?? null}
         title={book.data?.canonical_title ?? ''}
       />
       <View style={styles.rowText}>
-        <Text style={styles.sender}>{sender.data?.display_name ?? 'Someone'}</Text>
+        <Text style={styles.sender}>{sender.display_name}</Text>
         <Text style={styles.title} numberOfLines={2}>
           {book.data?.canonical_title ?? 'A book'}
         </Text>
