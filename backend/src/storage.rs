@@ -7,6 +7,10 @@
 //! re-checks that the URL points at the caller's own prefix (see
 //! [`AvatarStorage::owns_avatar_url`]).
 //!
+//! When a photo is replaced or removed, the backend deletes the old file (see
+//! [`AvatarStorage::delete_avatar`]) with a short-lived delete-only SAS, so a
+//! discarded photo doesn't stay reachable at its old URL.
+//!
 //! SAS tokens are signed locally with the storage account key (HMAC-SHA256);
 //! no Azure SDK involved. Format: "Create a service SAS" in the Azure Storage
 //! REST docs, `sv=2022-11-02`.
@@ -21,6 +25,9 @@ use uuid::Uuid;
 const SAS_VERSION: &str = "2022-11-02";
 /// How long the app has to complete the `PUT` after asking for the URL.
 const UPLOAD_TTL: Duration = Duration::minutes(10);
+/// A delete SAS is used immediately by us, so it only needs to outlive clock skew.
+const DELETE_TTL: Duration = Duration::minutes(5);
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct AvatarStorage {
@@ -31,6 +38,7 @@ pub struct AvatarStorage {
     /// `https://<account>.blob.core.windows.net`; Azurite's path-style
     /// `http://127.0.0.1:10000/devstoreaccount1` for local dev.
     endpoint: String,
+    http: reqwest::Client,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -58,6 +66,7 @@ impl AvatarStorage {
             container: container.into(),
             account,
             endpoint,
+            http: reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?,
         })
     }
 
@@ -101,8 +110,17 @@ impl AvatarStorage {
 
     fn create_upload_at(&self, key: Uuid, blob_id: Uuid, now: DateTime<Utc>) -> AvatarUpload {
         let blob = format!("{key}/{blob_id}.jpg");
-        let avatar_url = format!("{}/{}/{}", self.endpoint, self.container, blob);
         let expires_at = now + UPLOAD_TTL;
+        AvatarUpload {
+            upload_url: self.sas_url(&blob, "cw", expires_at),
+            avatar_url: format!("{}/{}/{}", self.endpoint, self.container, blob),
+            expires_at,
+        }
+    }
+
+    /// A URL for one blob carrying a service SAS with just `permissions`
+    /// (`cw` = create+write for uploads, `d` = delete).
+    fn sas_url(&self, blob: &str, permissions: &str, expires_at: DateTime<Utc>) -> String {
         let se = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);
         // Force https on the real service; Azurite (local dev) is plain http.
         let spr = if self.endpoint.starts_with("https://") {
@@ -112,28 +130,54 @@ impl AvatarStorage {
         };
 
         // Order matters: this is the exact string Azure recomputes.
-        // permissions (create+write), start, expiry, resource, identifier, IP,
-        // protocol, version, resource type (blob), snapshot time, encryption
-        // scope, then the five response-header overrides (all empty).
+        // permissions, start, expiry, resource, identifier, IP, protocol,
+        // version, resource type (blob), snapshot time, encryption scope, then
+        // the five response-header overrides (all empty).
         let string_to_sign = format!(
-            "cw\n\n{se}\n/blob/{}/{}/{blob}\n\n\n{spr}\n{SAS_VERSION}\nb\n\n\n\n\n\n\n",
+            "{permissions}\n\n{se}\n/blob/{}/{}/{blob}\n\n\n{spr}\n{SAS_VERSION}\nb\n\n\n\n\n\n\n",
             self.account, self.container
         );
         let sig = self.sign(&string_to_sign);
 
-        let mut url = reqwest::Url::parse(&avatar_url).expect("endpoint is a valid URL");
+        let mut url =
+            reqwest::Url::parse(&format!("{}/{}/{}", self.endpoint, self.container, blob))
+                .expect("endpoint is a valid URL");
         url.query_pairs_mut()
             .append_pair("sv", SAS_VERSION)
             .append_pair("spr", spr)
             .append_pair("se", &se)
             .append_pair("sr", "b")
-            .append_pair("sp", "cw")
+            .append_pair("sp", permissions)
             .append_pair("sig", &sig);
+        url.into()
+    }
 
-        AvatarUpload {
-            upload_url: url.into(),
-            avatar_url,
-            expires_at,
+    /// `<key>/<uuid>.jpg` for one of *our* photo URLs, `None` for anything else
+    /// (an external URL, a query string, extra path segments). Both the current
+    /// `avatar_key/` folders and older `user id/` ones have this shape. Keeping
+    /// this strict is what stops a delete from ever reaching a file that isn't a
+    /// profile photo.
+    fn blob_path(&self, avatar_url: &str) -> Option<String> {
+        let rest = avatar_url.strip_prefix(&format!("{}/{}/", self.endpoint, self.container))?;
+        let (folder, file) = rest.split_once('/')?;
+        let name = file.strip_suffix(".jpg")?;
+        (Uuid::parse_str(folder).is_ok() && Uuid::parse_str(name).is_ok()).then(|| rest.to_string())
+    }
+
+    /// Delete a photo we stored, given its public URL. A URL that isn't one of
+    /// ours, or a file that's already gone (404), is success — there's nothing
+    /// to delete. Callers treat failure as non-fatal (see `PATCH /me`).
+    pub async fn delete_avatar(&self, avatar_url: &str) -> anyhow::Result<()> {
+        let Some(blob) = self.blob_path(avatar_url) else {
+            return Ok(());
+        };
+        let url = self.sas_url(&blob, "d", Utc::now() + DELETE_TTL);
+        let response = self.http.delete(url).send().await?;
+        let status = response.status();
+        if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+            Ok(())
+        } else {
+            anyhow::bail!("deleting {blob} returned {status}")
         }
     }
 
@@ -208,5 +252,86 @@ mod tests {
             me,
             &format!("https://acct.blob.core.windows.net/avatars/{me}/../{other}/x.jpg")
         ));
+    }
+
+    #[test]
+    fn only_our_photo_files_map_to_a_deletable_blob() {
+        let s = storage();
+        let (folder, name) = (Uuid::new_v4(), Uuid::new_v4());
+        let base = "https://acct.blob.core.windows.net/avatars";
+
+        assert_eq!(
+            s.blob_path(&format!("{base}/{folder}/{name}.jpg")),
+            Some(format!("{folder}/{name}.jpg")),
+            "current and legacy folders share this shape"
+        );
+        for bad in [
+            format!("https://evil.example/avatars/{folder}/{name}.jpg"),
+            format!("https://acct.blob.core.windows.net/other/{folder}/{name}.jpg"),
+            format!("{base}/{folder}/{name}.jpg?sig=x"),
+            format!("{base}/{folder}/{name}.png"),
+            format!("{base}/{folder}/../{name}.jpg"),
+            format!("{base}/{folder}/sub/{name}.jpg"),
+            format!("{base}/not-a-uuid/{name}.jpg"),
+            format!("{base}/{folder}"),
+            format!("{base}/"),
+        ] {
+            assert_eq!(s.blob_path(&bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_delete_url_grants_delete_only() {
+        let s = storage();
+        let url = s.sas_url("a/b.jpg", "d", Utc::now() + DELETE_TTL);
+        assert!(url.contains("sp=d"), "{url}");
+        assert!(!url.contains("sp=cw"));
+    }
+
+    #[tokio::test]
+    async fn delete_avatar_treats_gone_and_foreign_as_success_and_surfaces_real_failures() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let s =
+            AvatarStorage::new("acct", &B64.encode(b"k"), "avatars", Some(server.uri())).unwrap();
+        let (folder, name) = (Uuid::new_v4(), Uuid::new_v4());
+        let url = |n: Uuid| format!("{}/avatars/{folder}/{n}.jpg", server.uri());
+        let gone = Uuid::new_v4();
+        let denied = Uuid::new_v4();
+
+        Mock::given(method("DELETE"))
+            .and(path(format!("/avatars/{folder}/{name}.jpg")))
+            .and(query_param("sp", "d"))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/avatars/{folder}/{gone}.jpg")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/avatars/{folder}/{denied}.jpg")))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        assert!(s.delete_avatar(&url(name)).await.is_ok(), "deleted");
+        assert!(s.delete_avatar(&url(gone)).await.is_ok(), "already gone");
+        assert!(
+            s.delete_avatar(&url(denied)).await.is_err(),
+            "403 is a real failure"
+        );
+
+        let before = server.received_requests().await.unwrap().len();
+        assert!(s.delete_avatar("https://evil.example/x.jpg").await.is_ok());
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            before,
+            "a URL that isn't ours triggers no request at all"
+        );
     }
 }

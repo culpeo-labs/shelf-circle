@@ -35,6 +35,7 @@ async fn get_me(
 }
 
 const MAX_DISPLAY_NAME_CHARS: usize = 50;
+const AVATAR_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Edit the caller's own profile. Only fields present in the body change.
 async fn update_me(
@@ -69,6 +70,15 @@ async fn update_me(
         Some(url) => (true, url),
         None => (false, None),
     };
+    // The photo we're about to replace or remove, so its file can be deleted.
+    let previous_avatar = if set_avatar {
+        sqlx::query_scalar::<_, Option<String>>("select avatar_url from users where id = $1")
+            .bind(me.id)
+            .fetch_one(&pool)
+            .await?
+    } else {
+        None
+    };
 
     let user = sqlx::query_as::<_, User>(
         "update users set \
@@ -85,6 +95,19 @@ async fn update_me(
     .bind(avatar_url)
     .fetch_one(&pool)
     .await?;
+
+    // Replacing or removing a photo deletes the old file, so a discarded photo
+    // doesn't stay reachable at its old URL. Best-effort: the profile is already
+    // saved, so a storage hiccup is logged rather than failing the request.
+    if let (Some(old), Some(storage)) = (previous_avatar, storage.as_ref()) {
+        if user.avatar_url.as_deref() != Some(old.as_str()) {
+            match tokio::time::timeout(AVATAR_DELETE_TIMEOUT, storage.delete_avatar(&old)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!("couldn't delete replaced avatar: {e}"),
+                Err(_) => tracing::warn!("deleting replaced avatar timed out"),
+            }
+        }
+    }
 
     Ok(Json(user))
 }

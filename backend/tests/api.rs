@@ -1987,6 +1987,81 @@ async fn no_response_to_another_user_contains_a_user_id() {
     );
 }
 
+/// Replacing or removing a profile photo deletes the old file (a DELETE to blob
+/// storage with a delete-only SAS); setting a photo when there was none, or
+/// re-saving the same one, deletes nothing; and a storage failure never fails
+/// the profile update.
+#[tokio::test]
+async fn replacing_or_removing_a_photo_deletes_the_old_file() {
+    let app = TestApp::new().await;
+    let (token, _id) = onboard(&app, "hanko|a", "alice").await;
+
+    let patch = |body: Value| json_request("PATCH", "/me", Some(&token), body);
+    let mint = || async {
+        let (_, ticket) = send(
+            &app.router,
+            json_request("POST", "/me/avatar-upload", Some(&token), json!({})),
+        )
+        .await;
+        ticket["avatar_url"].as_str().unwrap().to_string()
+    };
+    // Paths of the blobs that were deleted, in order.
+    let deleted = || async {
+        app.storage_server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| {
+                assert!(
+                    r.url.query().unwrap_or("").contains("sp=d"),
+                    "delete must use a delete-only SAS: {}",
+                    r.url
+                );
+                r.url.path().to_string()
+            })
+            .collect::<Vec<_>>()
+    };
+    let path_of = |url: &str| reqwest::Url::parse(url).unwrap().path().to_string();
+
+    // No photo yet -> the first one has nothing to delete.
+    let first = mint().await;
+    send(&app.router, patch(json!({ "avatar_url": first }))).await;
+    assert!(deleted().await.is_empty());
+
+    // Replacing it deletes the first file.
+    let second = mint().await;
+    let (status, me) = send(&app.router, patch(json!({ "avatar_url": second }))).await;
+    assert_eq!(status, StatusCode::OK, "body: {me}");
+    assert_eq!(me["avatar_url"], second);
+    assert_eq!(deleted().await, [path_of(&first)]);
+
+    // Re-saving the same photo, or editing something else, deletes nothing.
+    send(&app.router, patch(json!({ "avatar_url": second }))).await;
+    send(&app.router, patch(json!({ "display_name": "Alice L." }))).await;
+    assert_eq!(deleted().await.len(), 1);
+
+    // Removing the photo deletes the file too; removing again is a no-op.
+    let (_, me) = send(&app.router, patch(json!({ "avatar_url": null }))).await;
+    assert!(me["avatar_url"].is_null());
+    assert_eq!(deleted().await, [path_of(&first), path_of(&second)]);
+    send(&app.router, patch(json!({ "avatar_url": null }))).await;
+    assert_eq!(deleted().await.len(), 2, "nothing left to delete");
+
+    // A storage failure doesn't block the profile change.
+    let third = mint().await;
+    send(&app.router, patch(json!({ "avatar_url": third }))).await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&app.storage_server)
+        .await;
+    let (status, me) = send(&app.router, patch(json!({ "avatar_url": null }))).await;
+    assert_eq!(status, StatusCode::OK, "body: {me}");
+    assert!(me["avatar_url"].is_null(), "the profile still updated");
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

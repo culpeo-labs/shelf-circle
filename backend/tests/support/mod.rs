@@ -182,6 +182,9 @@ pub struct TestApp {
     /// Stands in for the BiblioCommons gateway; tests mount their own mocks.
     #[allow(dead_code)]
     pub catalog_server: MockServer,
+    /// Stands in for Azure Blob Storage (photo deletes are sent here).
+    #[allow(dead_code)]
+    pub storage_server: MockServer,
 }
 
 impl TestApp {
@@ -189,6 +192,12 @@ impl TestApp {
         let db = TestDb::new().await;
         let jwks_server = mock_jwks_server().await;
         let catalog_server = MockServer::start().await;
+        let storage_server = MockServer::start().await;
+        // Deleting a replaced photo is a DELETE against blob storage; accept it.
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&storage_server)
+            .await;
 
         let auth = HankoAuth::new(
             Some(format!("{}/.well-known/jwks.json", jwks_server.uri())),
@@ -207,7 +216,7 @@ impl TestApp {
                     "testacct",
                     "dGVzdC1rZXk=",
                     "avatars",
-                    None,
+                    Some(storage_server.uri()),
                 )
                 .expect("test storage config"),
             )),
@@ -221,6 +230,7 @@ impl TestApp {
             db,
             _jwks_server: jwks_server,
             catalog_server,
+            storage_server,
         }
     }
 

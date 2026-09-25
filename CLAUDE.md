@@ -43,7 +43,18 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   is `None`. Signing format was verified against Azurite (valid SAS → 201,
   tampered → 403); to re-check locally: `npx azurite-blob`, create an
   `avatars` container, and PUT to a minted URL with `x-ms-blob-type: BlockBlob`.
-  Old avatar blobs are not deleted when replaced.
+  **Replacing or removing a photo deletes the old file**: `PATCH /me` looks up the
+  previous `avatar_url` and, once the new value is saved, calls
+  `AvatarStorage::delete_avatar` — a `DELETE` with a delete-only SAS (`sp=d`, 5 min),
+  best-effort (a storage failure is logged, never fails the request; 404 counts as
+  done). `blob_path` only maps URLs of the exact shape `<uuid>/<uuid>.jpg` under our
+  container, so a delete can't reach anything that isn't a profile photo (older
+  `<user id>/…` files match too, so they're removed when replaced). Verified against
+  Azurite (upload 201 → delete → 404). **Not covered:** a photo that was uploaded but
+  never saved (the user backed out) stays as an orphan — the URL isn't stored anywhere;
+  a storage lifecycle rule (e.g. delete `avatars/` blobs never referenced) or a sweep
+  job would be the fix. Account deletion (not built) should also delete the user's
+  whole `avatar_key/` folder.
 - `src/db.rs` — pool creation + migration runner.
 - `src/error.rs` — `ApiError` / `ApiResult`; maps errors to JSON responses
   (`ProviderError` → 404 / 400 / 502).
