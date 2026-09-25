@@ -75,9 +75,29 @@ pub fn author_matches(book_author: &str, catalog_authors: &[String]) -> bool {
         .any(|a| squash(a).split(' ').any(|w| w == surname))
 }
 
-/// Languages are compared by their first two letters ("eng"/"en"/"en-US" agree).
-/// Unknown on either side is compatible.
-pub fn languages_compatible(book: Option<&str>, catalog: Option<&str>) -> bool {
+/// Every distinct title (by normalized form) to search under / accept: the
+/// canonical one first, then alternates, capped so a book with many editions
+/// doesn't fan out into many searches.
+pub fn title_variants<'a>(title: &'a str, alts: &'a [String], max: usize) -> Vec<&'a str> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for t in std::iter::once(title).chain(alts.iter().map(String::as_str)) {
+        let k = key(main_title(t));
+        if !k.is_empty() && !seen.contains(&k) {
+            seen.push(k);
+            out.push(t);
+        }
+        if out.len() == max {
+            break;
+        }
+    }
+    out
+}
+
+/// True when the record is in the book's language. Languages are compared by
+/// their first two letters ("eng"/"en"/"en-US" agree); unknown on either side
+/// counts as a match (nothing to disagree about).
+pub fn same_language(book: Option<&str>, catalog: Option<&str>) -> bool {
     let two = |s: &str| s.trim().to_lowercase().chars().take(2).collect::<String>();
     match (book, catalog) {
         (Some(b), Some(c)) if !b.trim().is_empty() && !c.trim().is_empty() => two(b) == two(c),
@@ -135,10 +155,29 @@ mod tests {
 
     #[test]
     fn language_compat() {
-        assert!(languages_compatible(Some("en"), Some("eng")));
-        assert!(languages_compatible(Some("en-US"), Some("eng")));
-        assert!(!languages_compatible(Some("en"), Some("spa")));
-        assert!(languages_compatible(None, Some("spa")));
-        assert!(languages_compatible(Some("en"), None));
+        assert!(same_language(Some("en"), Some("eng")));
+        assert!(same_language(Some("en-US"), Some("eng")));
+        assert!(!same_language(Some("en"), Some("spa")));
+        assert!(same_language(None, Some("spa")));
+        assert!(same_language(Some("en"), None));
+    }
+
+    #[test]
+    fn title_variants_dedupe_and_cap() {
+        let alts = vec![
+            "One Hundred Years of Solitude".to_string(),
+            "the cien años de soledad".to_string(), // same as canonical once normalized
+            "Cent ans de solitude".to_string(),
+            "Hundert Jahre Einsamkeit".to_string(),
+        ];
+        assert_eq!(
+            title_variants("Cien años de soledad", &alts, 3),
+            [
+                "Cien años de soledad",
+                "One Hundred Years of Solitude",
+                "Cent ans de solitude"
+            ]
+        );
+        assert_eq!(title_variants("Dune", &[], 3), ["Dune"]);
     }
 }

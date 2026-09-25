@@ -69,9 +69,16 @@ pub fn system(id: &str) -> Option<&'static LibrarySystem> {
 /// the exact edition or catch retitled ones.
 #[derive(Debug, Clone, Copy)]
 pub struct BookQuery<'a> {
+    /// The work's title as we store it.
     pub title: &'a str,
+    /// Other titles the same work goes by on the editions we have on file
+    /// (translations: the work is filed under its original-language title but
+    /// the saved edition may be "One Hundred Years of Solitude"). Any of
+    /// `title` + these counts as the same work.
+    pub alt_titles: &'a [String],
     pub author: Option<&'a str>,
-    /// BCP-47-ish tag ("en"); records in other languages are skipped.
+    /// BCP-47-ish tag ("en"); records in this language are preferred, others
+    /// are still accepted when they're all the catalog has.
     pub language: Option<&'a str>,
     /// Normalized (see [`normalize_isbn`]), ISBN-13s first.
     pub isbns: &'a [String],
@@ -80,8 +87,9 @@ pub struct BookQuery<'a> {
 impl BookQuery<'_> {
     fn cache_key(&self) -> String {
         format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}",
             self.title.trim().to_lowercase(),
+            self.alt_titles.join("/").to_lowercase(),
             self.author.unwrap_or("").trim().to_lowercase(),
             self.language.unwrap_or(""),
             self.isbns.join(",")

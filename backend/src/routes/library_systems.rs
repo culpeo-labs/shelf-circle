@@ -123,8 +123,8 @@ async fn book_library_link(
 
     // Editions on file: ISBN-13s first (what catalogs mostly index), then
     // ISBN-10s. Used to prefer the exact edition, not to identify the book.
-    let editions = sqlx::query_as::<_, (Option<String>, Option<String>, String)>(
-        "select isbn_13, isbn_10, language from book_editions where book_id = $1 order by created_at",
+    let editions = sqlx::query_as::<_, (Option<String>, Option<String>, String, String)>(
+        "select isbn_13, isbn_10, language, title from book_editions where book_id = $1 order by created_at",
     )
     .bind(book_id)
     .fetch_all(&pool)
@@ -132,8 +132,8 @@ async fn book_library_link(
     let mut isbns: Vec<String> = Vec::new();
     for isbn in editions
         .iter()
-        .filter_map(|(a, _, _)| a.as_deref())
-        .chain(editions.iter().filter_map(|(_, b, _)| b.as_deref()))
+        .filter_map(|(a, ..)| a.as_deref())
+        .chain(editions.iter().filter_map(|(_, b, ..)| b.as_deref()))
     {
         let isbn = catalogs::normalize_isbn(isbn);
         if !isbn.is_empty() && !isbns.contains(&isbn) {
@@ -142,10 +142,15 @@ async fn book_library_link(
     }
     isbns.truncate(MAX_ISBNS);
 
+    // Edition titles that differ from the work's (translations) — the catalog
+    // may list the book under one of those instead.
+    let alt_titles: Vec<String> = editions.iter().map(|(.., t)| t.clone()).collect();
+
     let query = BookQuery {
         title: &title,
+        alt_titles: &alt_titles,
         author: author.as_deref(),
-        language: editions.first().map(|(_, _, l)| l.as_str()),
+        language: editions.first().map(|(_, _, l, _)| l.as_str()),
         isbns: &isbns,
     };
 
