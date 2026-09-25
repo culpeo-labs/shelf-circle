@@ -1,19 +1,15 @@
-use axum::extract::{Path, State};
-use axum::routing::{get, post};
+use axum::extract::State;
+use axum::routing::post;
 use axum::{Json, Router};
 use sqlx::PgPool;
-use uuid::Uuid;
 
-use crate::auth::{AuthClaims, CurrentUser};
+use crate::auth::AuthClaims;
 use crate::error::{ApiError, ApiResult};
 use crate::models::{CreateUser, User};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/users", post(create_user))
-        .route("/users/{id}", get(get_user))
-        .route("/users/by-handle/{handle}", get(get_user_by_handle))
+    Router::new().route("/users", post(create_user))
 }
 
 /// Create the profile for the authenticated token (onboarding). The Hanko user
@@ -45,38 +41,6 @@ async fn create_user(
     .bind(claims.email())
     .fetch_one(&pool)
     .await?;
-
-    Ok(Json(user))
-}
-
-async fn get_user(
-    State(pool): State<PgPool>,
-    _caller: CurrentUser,
-    Path(id): Path<Uuid>,
-) -> ApiResult<Json<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&pool)
-    .await?
-    .ok_or(ApiError::NotFound)?;
-
-    Ok(Json(user))
-}
-
-async fn get_user_by_handle(
-    State(pool): State<PgPool>,
-    _caller: CurrentUser,
-    Path(handle): Path<String>,
-) -> ApiResult<Json<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where handle = $1",
-    )
-    .bind(handle)
-    .fetch_optional(&pool)
-    .await?
-    .ok_or(ApiError::NotFound)?;
 
     Ok(Json(user))
 }

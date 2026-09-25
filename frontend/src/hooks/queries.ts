@@ -36,22 +36,20 @@ export function useLibrary(shelf: LibraryShelf) {
 }
 
 /** A friend's library — the server 403s unless they've turned on sharing. */
-export function useFriendLibrary(userId: UUID | undefined, enabled: boolean) {
+export function useFriendLibrary(friendshipId: UUID | undefined, enabled: boolean) {
   return useQuery({
-    queryKey: ['library', userId, 'all'],
-    queryFn: () => api.getLibrary(userId!, 'all'),
-    enabled: !!userId && enabled,
+    queryKey: ['friend-library', friendshipId, 'all'],
+    queryFn: () => api.getFriendLibrary(friendshipId!, 'all'),
+    enabled: !!friendshipId && enabled,
   });
 }
 
 export function useUpdateMe() {
   const { updateUser } = useAuth();
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateMeInput) => api.updateMe(input),
     onSuccess: async (updated) => {
       await updateUser(updated);
-      void queryClient.invalidateQueries({ queryKey: ['user', updated.id] });
     },
   });
 }
@@ -147,11 +145,12 @@ export function useBook(bookId: UUID | undefined) {
   });
 }
 
-export function useUser(userId: UUID | undefined) {
+/** A friend's profile, addressed by friendship. */
+export function useFriendProfile(friendshipId: UUID | undefined) {
   return useQuery({
-    queryKey: ['user', userId],
-    queryFn: () => api.getUser(userId!),
-    enabled: !!userId,
+    queryKey: ['friend', friendshipId],
+    queryFn: () => api.getFriend(friendshipId!),
+    enabled: !!friendshipId,
   });
 }
 
@@ -224,10 +223,63 @@ export function useCreateRecommendation() {
 }
 
 export function useCreateInvite() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
-    mutationFn: () => api.createInvite(),
+    mutationFn: (reusable: boolean) => api.createInvite(reusable),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-invites', user?.id] }),
   });
 }
+
+/** Your invites that can still be used (so a reusable link can be found and revoked). */
+export function useMyInvites() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['my-invites', user?.id],
+    queryFn: api.listMyInvites,
+    enabled: !!user,
+  });
+}
+
+export function useRevokeInvite() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: (token: string) => api.revokeInvite(token),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['my-invites', user?.id] }),
+  });
+}
+
+/**
+ * People asking to join through your reusable invites. Nothing pushes to the
+ * device, so poll (only while the app is open) — it also drives the Friends
+ * tab badge.
+ */
+export function useFriendRequests() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ['friend-requests', user?.id],
+    queryFn: api.listFriendRequests,
+    enabled: !!user,
+    refetchInterval: 60_000,
+  });
+}
+
+function useDecideRequest(fn: (id: string) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['friend-requests', user?.id] });
+      void queryClient.invalidateQueries({ queryKey: ['friends', user?.id] });
+      void queryClient.invalidateQueries({ queryKey: ['feed', user?.id] });
+    },
+  });
+}
+
+export const useApproveFriendRequest = () => useDecideRequest(api.approveFriendRequest);
+export const useDeclineFriendRequest = () => useDecideRequest(api.declineFriendRequest);
 
 /** Public preview of who an invite token is from — no auth needed. */
 export function useInvitePreview(token: string | undefined) {
@@ -243,8 +295,10 @@ export function useAcceptInvite() {
   const { user } = useAuth();
   return useMutation({
     mutationFn: (token: string) => api.acceptInvite(token),
-    onSuccess: () => {
+    onSuccess: (result) => {
       if (!user) return;
+      // A pending request changes nothing for you yet; only a real connection does.
+      if (result.status !== 'friends') return;
       void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
       void queryClient.invalidateQueries({ queryKey: ['friends', user.id] });
     },

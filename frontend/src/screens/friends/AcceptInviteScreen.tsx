@@ -21,11 +21,17 @@ export function AcceptInviteScreen({ route }: Props) {
   const preview = useInvitePreview(token);
   const acceptInvite = useAcceptInvite();
   const [acceptError, setAcceptError] = useState<string | null>(null);
+  // A reusable link only sends a request; the inviter has to approve it.
+  const [requested, setRequested] = useState(false);
 
   async function accept() {
     setAcceptError(null);
     try {
-      await acceptInvite.mutateAsync(token);
+      const result = await acceptInvite.mutateAsync(token);
+      if (result.status === 'pending') {
+        setRequested(true);
+        return;
+      }
       navigation.popToTop();
     } catch (e) {
       setAcceptError(e instanceof ApiError ? e.message : 'Could not accept this invite.');
@@ -55,11 +61,34 @@ export function AcceptInviteScreen({ route }: Props) {
     );
   }
 
+  if (requested) {
+    return (
+      <View style={styles.centered}>
+        <Avatar url={preview.data.avatar_url} name={preview.data.display_name} size={72} />
+        <Text style={styles.title}>Request sent</Text>
+        <Text style={styles.subtitle}>
+          {preview.data.display_name} will see it and can approve you as a friend.
+        </Text>
+        <Pressable style={styles.secondaryButton} onPress={() => navigation.popToTop()}>
+          <Text style={styles.secondaryButtonText}>Done</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.centered}>
       <Avatar url={preview.data.avatar_url} name={preview.data.display_name} size={72} />
-      <Text style={styles.title}>{preview.data.display_name} wants to be your friend</Text>
-      <Text style={styles.subtitle}>on Shelf Circle</Text>
+      <Text style={styles.title}>
+        {preview.data.requires_approval
+          ? `Ask to be friends with ${preview.data.display_name}?`
+          : `${preview.data.display_name} wants to be your friend`}
+      </Text>
+      <Text style={styles.subtitle}>
+        {preview.data.requires_approval
+          ? "They'll get a request and choose whether to accept."
+          : 'on Shelf Circle'}
+      </Text>
 
       {acceptError && <Text style={styles.error}>{acceptError}</Text>}
 
@@ -71,7 +100,9 @@ export function AcceptInviteScreen({ route }: Props) {
         {acceptInvite.isPending ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.buttonText}>Accept</Text>
+          <Text style={styles.buttonText}>
+            {preview.data.requires_approval ? 'Send request' : 'Accept'}
+          </Text>
         )}
       </Pressable>
       <Pressable onPress={() => navigation.popToTop()} disabled={acceptInvite.isPending}>

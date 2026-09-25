@@ -1,3 +1,8 @@
+> **Status:** built, and since extended. The invite flow below is what shipped, plus a
+> *reusable* invite mode ("anyone with the link", 30 days, revocable) whose joiners are
+> **pending requests the issuer approves**, and the old handle-based add / handle lookup
+> were removed. See `CLAUDE.md` → **Friends & invites** for the current behavior.
+
 # Spec: Invite-based friend adding (QR + link)
 
 ## Goal

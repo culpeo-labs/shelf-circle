@@ -10,7 +10,7 @@ import type { LibraryEntry } from '../../api/types';
 import { Avatar } from '../../components/Avatar';
 import { BookCover } from '../../components/BookCover';
 import { StarRating } from '../../components/StarRating';
-import { useFriendLibrary, useUser } from '../../hooks/queries';
+import { useFriendLibrary, useFriendProfile } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FriendProfile'>;
@@ -22,12 +22,12 @@ const SHELVES: { title: string; statuses: LibraryEntry['status'][] }[] = [
 ];
 
 export function FriendProfileScreen({ route }: Props) {
-  const { userId, displayName } = route.params;
+  const { friendshipId, displayName } = route.params;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { data } = useUser(userId);
+  const { data } = useFriendProfile(friendshipId);
   const name = data?.display_name ?? displayName;
   const shared = data?.share_shelves === true;
-  const library = useFriendLibrary(userId, shared);
+  const library = useFriendLibrary(friendshipId, shared);
 
   const shelves = useMemo(
     () =>

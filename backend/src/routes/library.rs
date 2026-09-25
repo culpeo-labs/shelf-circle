@@ -6,13 +6,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::CurrentUser;
+use super::friendships::friend_user_id;
+use crate::auth::{ensure_self, CurrentUser};
 use crate::error::{ApiError, ApiResult};
-use crate::models::{ReadingStatus, User};
+use crate::models::ReadingStatus;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/users/{user_id}/library", get(user_library))
+    Router::new()
+        .route("/users/{user_id}/library", get(my_library))
+        .route("/friends/{friendship_id}/library", get(friend_library))
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,40 +35,6 @@ fn shelf_filter(shelf: &str) -> Option<&'static str> {
         "did_not_finish" => Some("bs.status = 'did_not_finish'"),
         "all" => Some("true"),
         _ => None,
-    }
-}
-
-/// You can read your own library, or a friend's if they opted in
-/// (`users.share_shelves`). Non-friends and unknown ids get the same 403 so
-/// this doesn't reveal who exists.
-async fn ensure_can_view_library(pool: &PgPool, me: &User, owner_id: Uuid) -> ApiResult<()> {
-    if me.id == owner_id {
-        return Ok(());
-    }
-    let (low, high) = if me.id < owner_id {
-        (me.id, owner_id)
-    } else {
-        (owner_id, me.id)
-    };
-    let shared = sqlx::query_scalar::<_, bool>(
-        "select u.share_shelves from friendships f \
-         join users u on u.id = $3 \
-         where f.user_a_id = $1 and f.user_b_id = $2",
-    )
-    .bind(low)
-    .bind(high)
-    .bind(owner_id)
-    .fetch_optional(pool)
-    .await?;
-
-    match shared {
-        Some(true) => Ok(()),
-        Some(false) => Err(ApiError::Forbidden(
-            "this friend hasn't shared their shelves".into(),
-        )),
-        None => Err(ApiError::Forbidden(
-            "you can only view your own or a friend's shelves".into(),
-        )),
     }
 }
 
@@ -98,23 +67,51 @@ pub struct LibraryEntry {
     pub book: LibraryBook,
 }
 
-/// A user's shelves: always your own; a friend's only if they've turned on
-/// `share_shelves`.
+/// Your own shelves. (Other people's are at `/friends/{friendship_id}/library`,
+/// so no user id other than your own ever appears in an API path.)
 ///
 /// `?shelf=reading` is the in-progress view; `?shelf=read`
 /// is everything they've finished or abandoned (with ratings). To add a book
 /// they read off-platform, resolve it first (`/books/search` + `/books/resolve`,
 /// or a manual `/books/resolve` body) then `PUT /book-statuses` with
 /// `status: "finished"` and an optional `rating`.
-async fn user_library(
+async fn my_library(
     State(pool): State<PgPool>,
     CurrentUser(me): CurrentUser,
     Path(user_id): Path<Uuid>,
     Query(params): Query<LibraryParams>,
 ) -> ApiResult<Json<Vec<LibraryEntry>>> {
-    ensure_can_view_library(&pool, &me, user_id).await?;
+    ensure_self(&me, user_id)?;
+    library_of(&pool, user_id, params.shelf.as_deref()).await
+}
 
-    let filter = match params.shelf.as_deref() {
+/// A friend's shelves — only if they've turned on `share_shelves`. The friend is
+/// named by friendship; a friendship that isn't yours is a 404.
+async fn friend_library(
+    State(pool): State<PgPool>,
+    CurrentUser(me): CurrentUser,
+    Path(friendship_id): Path<Uuid>,
+    Query(params): Query<LibraryParams>,
+) -> ApiResult<Json<Vec<LibraryEntry>>> {
+    let friend_id = friend_user_id(&pool, me.id, friendship_id).await?;
+    let shared = sqlx::query_scalar::<_, bool>("select share_shelves from users where id = $1")
+        .bind(friend_id)
+        .fetch_one(&pool)
+        .await?;
+    if !shared {
+        return Err(ApiError::Forbidden(
+            "this friend hasn't shared their shelves".into(),
+        ));
+    }
+    library_of(&pool, friend_id, params.shelf.as_deref()).await
+}
+
+async fn library_of(
+    pool: &PgPool,
+    user_id: Uuid,
+    shelf: Option<&str>,
+) -> ApiResult<Json<Vec<LibraryEntry>>> {
+    let filter = match shelf {
         None => "true",
         Some(name) => shelf_filter(name).ok_or_else(|| {
             ApiError::BadRequest(
@@ -147,7 +144,7 @@ async fn user_library(
     // not being a `&'static str` itself. See `sqlx::AssertSqlSafe`'s docs.
     let rows = sqlx::query_as::<_, LibraryRow>(sqlx::AssertSqlSafe(sql))
         .bind(user_id)
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await?;
 
     let entries = rows
