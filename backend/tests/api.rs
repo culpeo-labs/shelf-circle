@@ -1343,6 +1343,178 @@ async fn book_descriptions_are_stored_and_filled_in_later() {
     assert_eq!(third["description"], "Added later.");
 }
 
+/// Yearly counts come from `book_completions`: live finishes and rereads count
+/// (each finish, even of the same book), backdated backlog reads don't (until
+/// reread), an immediately-undone finish doesn't, and the year is read in the
+/// caller's time zone. Also covers goal create/update/delete + validation.
+#[tokio::test]
+async fn reading_stats_count_completions_not_backlog() {
+    use chrono::Datelike;
+    let app = TestApp::new().await;
+    let (token, user_id) = onboard(&app, "hanko|a", "alice").await;
+    let this_year = chrono::Utc::now().year();
+    let month_idx = (chrono::Utc::now()
+        .format("%m")
+        .to_string()
+        .parse::<usize>()
+        .unwrap())
+        - 1;
+
+    let stats = |query: &str| {
+        let token = token.clone();
+        let router = app.router.clone();
+        let uri = format!("/me/reading-stats{query}");
+        async move { send(&router, get_request(&uri, Some(&token))).await }
+    };
+    let set_status = |book: &str, status: &str, backdated: bool| {
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": status, "backdated": backdated }),
+        )
+    };
+    let age_completions = |book: String| {
+        let pool = app.db.pool.clone();
+        async move {
+            sqlx::query(
+                "update book_completions set completed_at = now() - interval '2 days' \
+                 where book_id = $1::uuid",
+            )
+            .bind(book)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+
+    let (_, empty) = stats("").await;
+    assert_eq!(empty["year"], this_year);
+    assert_eq!(empty["completed"], 0);
+    assert!(empty["goal"].is_null());
+
+    let book_a = resolve_book(&app, &token, "OL1W").await;
+    let book_b = resolve_book(&app, &token, "OL2W").await;
+    let book_c = resolve_book(&app, &token, "OL3W").await;
+
+    // A: a live finish counts.
+    send(&app.router, set_status(&book_a, "finished", false)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 1);
+    assert_eq!(s["by_month"][month_idx], 1);
+
+    // B: a backdated (backlog) finish is recorded but not counted.
+    send(&app.router, set_status(&book_b, "finished", true)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 1, "backlog read isn't counted");
+
+    // Re-submitting the same status (say, a rating edit) doesn't add a finish.
+    send(&app.router, set_status(&book_a, "finished", false)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 1);
+
+    // Reread A (finished long ago, so leaving 'finished' isn't an undo): counts again.
+    age_completions(book_a.clone()).await;
+    send(&app.router, set_status(&book_a, "currently_reading", false)).await;
+    send(&app.router, set_status(&book_a, "finished", false)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 2, "each finish of the same book counts");
+
+    // Reread the backlog book B: the reread is a real, counted finish.
+    age_completions(book_b.clone()).await;
+    send(&app.router, set_status(&book_b, "currently_reading", false)).await;
+    send(&app.router, set_status(&book_b, "finished", false)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 3);
+
+    // C: marking finished by accident and undoing it straight away doesn't count.
+    send(&app.router, set_status(&book_c, "finished", false)).await;
+    send(&app.router, set_status(&book_c, "currently_reading", false)).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["completed"], 3, "immediate undo removes the completion");
+
+    // Year boundaries depend on the time zone: this instant is Jan 1 02:00 UTC
+    // in 2020 but Dec 31 18:00 in Los Angeles, i.e. still 2019.
+    sqlx::query(
+        "insert into book_completions (user_id, book_id, completed_at) \
+         values ($1::uuid, $2::uuid, '2020-01-01T02:00:00Z')",
+    )
+    .bind(&user_id)
+    .bind(&book_c)
+    .execute(&app.db.pool)
+    .await
+    .unwrap();
+    let (_, s) = stats("?year=2020&tz=UTC").await;
+    assert_eq!(
+        (s["completed"].clone(), s["by_month"][0].clone()),
+        (json!(1), json!(1))
+    );
+    let (_, s) = stats("?year=2020&tz=America/Los_Angeles").await;
+    assert_eq!(s["completed"], 0);
+    let (_, s) = stats("?year=2019&tz=America/Los_Angeles").await;
+    assert_eq!(
+        (s["completed"].clone(), s["by_month"][11].clone()),
+        (json!(1), json!(1))
+    );
+    let (_, s) = stats("?year=2019&tz=UTC").await;
+    assert_eq!(s["completed"], 0);
+
+    // Validation.
+    for bad in ["?tz=Mars/Olympus_Mons", "?year=1800"] {
+        let (status, _) = stats(bad).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+
+    // Goals: set, change, shown in stats, delete.
+    let goal = |year: i32, body: Value| {
+        json_request(
+            "PUT",
+            &format!("/me/reading-goals/{year}"),
+            Some(&token),
+            body,
+        )
+    };
+    let (status, g) = send(
+        &app.router,
+        goal(
+            this_year,
+            json!({ "target_count": 24, "time_zone": "America/Los_Angeles" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {g}");
+    let (_, s) = stats("").await;
+    assert_eq!(s["goal"]["target_count"], 24);
+    assert_eq!(s["goal"]["year"], this_year);
+    let (_, _) = send(&app.router, goal(this_year, json!({ "target_count": 30 }))).await;
+    let (_, s) = stats("").await;
+    assert_eq!(s["goal"]["target_count"], 30, "updated in place");
+    let (_, other_year) = stats(&format!("?year={}", this_year - 1)).await;
+    assert!(other_year["goal"].is_null(), "goals are per year");
+
+    for bad in [
+        json!({ "target_count": 0 }),
+        json!({ "target_count": 5, "time_zone": "Nope/Nope" }),
+    ] {
+        let (status, _) = send(&app.router, goal(this_year, bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+
+    let (status, _) = send(
+        &app.router,
+        json_request(
+            "DELETE",
+            &format!("/me/reading-goals/{this_year}"),
+            Some(&token),
+            json!(null),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, s) = stats("").await;
+    assert!(s["goal"].is_null());
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.
