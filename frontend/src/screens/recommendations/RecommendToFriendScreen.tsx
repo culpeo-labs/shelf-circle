@@ -7,16 +7,19 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  View,
 } from 'react-native';
 
 import type { User } from '../../api/types';
 import { useCreateRecommendation, useFriends } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/StatusViews';
 
@@ -56,7 +59,10 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
   }
 
   return (
-    <View style={styles.flex}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <FlatList
         data={friends}
         keyExtractor={(f) => f.id}
@@ -71,7 +77,9 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
           </Pressable>
         )}
       />
-      <View style={styles.footer}>
+      {/* The modal runs edge-to-edge, so without the bottom inset the button
+          slides under the system navigation bar and only half of it shows. */}
+      <SafeAreaView edges={['bottom']} style={styles.footer}>
         <TextInput
           placeholderTextColor="#918a78"
           style={styles.note}
@@ -92,8 +100,8 @@ export function RecommendToFriendScreen({ route, navigation }: Props) {
             <Text style={styles.buttonText}>Send recommendation</Text>
           )}
         </Pressable>
-      </View>
-    </View>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
