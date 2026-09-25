@@ -71,7 +71,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   false` — persists the same flag on the row itself, for a "logged as
   backlog" badge; see **Timeline / feed**), `0009_share_shelves.sql`
   (`users.share_shelves boolean not null default false`), `0010_library_system.sql`
-  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK). UUID default is
+  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK),
+  `0011_book_description.sql` (`books.description` + `description_checked_at`; see **Book descriptions**). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -239,6 +240,22 @@ but has no routes yet.
   the user's own shelves with book details. `shelf` maps to a **static** SQL
   predicate (no user input in query text). Off-platform books: `/books/resolve`
   (manual body, `source:"manual"`) then `PUT /book-statuses` finished + rating.
+
+### Book descriptions
+
+- `books.description` (plain text, shown on the book page only when present).
+  Captured at resolve: Open Library work `description` (a string or `{type,
+  value}`) / Google Books `volumeInfo.description` (HTML), both run through
+  `providers/text.rs` (`\r\n`, markdown emphasis/links, `----------` source
+  footers, HTML tags/entities, 4000-char cap). `ResolvedBook.description` is
+  optional so manual entries/older clients needn't send it. Re-resolving an
+  existing book fills a missing description but never overwrites one.
+- **Lazy backfill** for books saved before this existed: `GET /books/{id}` with
+  no description and a provider id fetches one (4s timeout, best-effort — a
+  failing provider never breaks the page). `description_checked_at` is set when
+  a lookup *succeeds* (even with no description found) so a book with none at
+  the source isn't re-fetched for 30 days; a failed/timed-out lookup isn't
+  recorded and retries next view. Manual books (no provider id) never fetch.
 
 ### Book search / resolve
 

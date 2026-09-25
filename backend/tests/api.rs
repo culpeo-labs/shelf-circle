@@ -1288,6 +1288,61 @@ async fn library_link_matches_the_work_with_search_fallback() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Descriptions ride along on resolve, come back from `GET /books/{id}`, are
+/// null when no source had one, and get filled in (never overwritten) when the
+/// same book is resolved again later.
+#[tokio::test]
+async fn book_descriptions_are_stored_and_filled_in_later() {
+    let app = TestApp::new().await;
+    let (token, _id) = onboard(&app, "hanko|a", "alice").await;
+
+    let resolve = |source_id: &str, description: Value| {
+        let mut body = normalized_book(source_id, source_id, "Ed");
+        body["description"] = description;
+        json_request("POST", "/books/resolve", Some(&token), body)
+    };
+    let get_book = |id: &str| get_request(&format!("/books/{id}"), Some(&token));
+
+    // With a description.
+    let (status, with) = send(&app.router, resolve("OL1W", json!("A story about hunger."))).await;
+    assert_eq!(status, StatusCode::OK, "body: {with}");
+    assert_eq!(with["description"], "A story about hunger.");
+    let (_, fetched) = send(&app.router, get_book(with["id"].as_str().unwrap())).await;
+    assert_eq!(fetched["description"], "A story about hunger.");
+
+    // Without one (and no provider ids that a backfill could ask about).
+    let mut manual = normalized_book("manual-1", "manual-1", "Ed");
+    manual["source"] = json!("manual");
+    manual["open_library_work_id"] = json!(null);
+    let (_, without) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual.clone()),
+    )
+    .await;
+    assert!(without["description"].is_null());
+    let (_, fetched) = send(&app.router, get_book(without["id"].as_str().unwrap())).await;
+    assert!(fetched["description"].is_null());
+
+    // Re-resolving the same edition later, now with a description, fills it in...
+    manual["description"] = json!("Added later.");
+    let (_, again) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual.clone()),
+    )
+    .await;
+    assert_eq!(again["id"], without["id"], "same book");
+    assert_eq!(again["description"], "Added later.");
+
+    // ...but never overwrites an existing one.
+    manual["description"] = json!("Something else entirely.");
+    let (_, third) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), manual),
+    )
+    .await;
+    assert_eq!(third["description"], "Added later.");
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.
