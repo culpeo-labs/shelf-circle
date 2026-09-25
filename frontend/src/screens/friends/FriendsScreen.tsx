@@ -5,7 +5,12 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'rea
 
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/StatusViews';
-import { useFriends } from '../../hooks/queries';
+import {
+  useApproveFriendRequest,
+  useDeclineFriendRequest,
+  useFriendRequests,
+  useFriends,
+} from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
 export function FriendsScreen() {
@@ -24,6 +29,8 @@ export function FriendsScreen() {
       <Pressable style={styles.addButton} onPress={() => navigation.navigate('AddFriend')}>
         <Text style={styles.addButtonText}>+ Add friend</Text>
       </Pressable>
+
+      <FriendRequests />
 
       {friends.length === 0 ? (
         <EmptyState
@@ -61,7 +68,64 @@ export function FriendsScreen() {
   );
 }
 
+/** People who used one of your reusable invite links and are waiting for you. */
+function FriendRequests() {
+  const requests = useFriendRequests();
+  const approve = useApproveFriendRequest();
+  const decline = useDeclineFriendRequest();
+  const pending = requests.data ?? [];
+  if (pending.length === 0) return null;
+  const busy = approve.isPending || decline.isPending;
+
+  return (
+    <View style={styles.requests}>
+      <Text style={styles.requestsTitle}>Friend requests</Text>
+      {pending.map((r) => (
+        <View key={r.id} style={styles.requestRow}>
+          <Avatar url={r.avatar_url} name={r.display_name} />
+          <Text style={[styles.name, styles.flex]} numberOfLines={1}>
+            {r.display_name}
+          </Text>
+          <Pressable onPress={() => decline.mutate(r.id)} disabled={busy} hitSlop={8}>
+            <Text style={styles.declineText}>Decline</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.approve, busy && styles.approveDisabled]}
+            onPress={() => approve.mutate(r.id)}
+            disabled={busy}
+          >
+            <Text style={styles.approveText}>Approve</Text>
+          </Pressable>
+        </View>
+      ))}
+      {(approve.isError || decline.isError) && (
+        <Text style={styles.requestError}>Couldn’t save that. Try again.</Text>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  requests: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    gap: 10,
+    borderRadius: 12,
+    backgroundColor: '#e6efe9',
+  },
+  requestsTitle: { fontSize: 13, fontWeight: '700', color: '#3b6e5e', textTransform: 'uppercase' },
+  requestRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  declineText: { color: '#6b6456', fontSize: 14 },
+  approve: {
+    backgroundColor: '#3b6e5e',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  approveDisabled: { opacity: 0.6 },
+  approveText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  requestError: { color: '#b3432b', fontSize: 12 },
   flex: { flex: 1 },
   addButton: { alignSelf: 'flex-start', margin: 16, marginBottom: 0 },
   addButtonText: { color: '#3b6e5e', fontWeight: '600', fontSize: 15 },

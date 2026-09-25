@@ -79,13 +79,6 @@ export interface CreateUserInput {
   locale?: string;
 }
 
-export interface Friendship {
-  id: UUID;
-  user_a_id: UUID;
-  user_b_id: UUID;
-  created_at: Timestamp;
-}
-
 export interface Book {
   id: UUID;
   canonical_title: string;
@@ -205,6 +198,35 @@ export interface CreateRecommendationInput {
 export interface Invite {
   token: string;
   expires_at: Timestamp;
+  /** "Anyone with the link": several people may use it, each needing your approval. */
+  reusable: boolean;
+}
+
+/** One of your own invites that can still be used (GET /invites). */
+export interface MyInvite {
+  token: string;
+  reusable: boolean;
+  expires_at: Timestamp;
+  /** People who have become friends through it. */
+  use_count: number;
+  /** Requests waiting for your approval. */
+  pending_requests: number;
+}
+
+/** POST /invites/{token}/accept and approve. `pending`: the inviter has to
+ * approve. `friendship_id` is an opaque id for the friendship, not a user id. */
+export interface AcceptResult {
+  status: 'friends' | 'pending';
+  friendship_id: UUID | null;
+}
+
+/** Someone asking to join through one of your reusable invites. Not a friend
+ * yet, so only a name and photo — never a handle or user id. */
+export interface FriendRequest {
+  id: UUID;
+  display_name: string;
+  avatar_url: string | null;
+  created_at: Timestamp;
 }
 
 /** GET /invites/{token} response (public — no auth). Never the inviter's
@@ -212,6 +234,8 @@ export interface Invite {
 export interface InvitePreview {
   display_name: string;
   avatar_url: string | null;
+  /** Accepting sends a request they must approve, instead of connecting you at once. */
+  requires_approval: boolean;
 }
 
 export interface FeedItem {

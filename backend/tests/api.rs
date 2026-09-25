@@ -125,35 +125,51 @@ async fn onboard(app: &TestApp, sub: &str, handle: &str) -> (String, String) {
     (token, body["id"].as_str().unwrap().to_string())
 }
 
-#[tokio::test]
-async fn users_lookup_and_ensure_self_guard() {
-    let app = TestApp::new().await;
-    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
-    let (_token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
-
-    let (status, body) = send(
+/// Make two onboarded users friends the only way that exists: one creates a
+/// single-use invite and the other accepts it.
+async fn befriend(app: &TestApp, inviter_token: &str, accepter_token: &str) {
+    let (status, invite) = send(
         &app.router,
-        get_request(&format!("/users/{id_b}"), Some(&token_a)),
+        json_request("POST", "/invites", Some(inviter_token), json!({})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["handle"], "bob");
-
+    assert_eq!(status, StatusCode::OK, "invite: {invite}");
+    let token = invite["token"].as_str().unwrap();
     let (status, body) = send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(accepter_token),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "accept: {body}");
+    assert_eq!(body["status"], "friends");
+}
+
+/// A profile is visible to its owner and their friends — being signed in isn't
+/// enough (no lookup by id, and lookup by handle no longer exists).
+#[tokio::test]
+async fn profile_lookup_is_limited_to_self_and_friends() {
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let get_profile = |token: &str, id: &str| get_request(&format!("/users/{id}"), Some(token));
+
+    let (status, _) = send(&app.router, get_profile(&token_a, &id_b)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a stranger's profile");
+    let (status, _) = send(&app.router, get_profile(&token_a, &id_a)).await;
+    assert_eq!(status, StatusCode::OK, "your own");
+
+    let (status, _) = send(
         &app.router,
         get_request("/users/by-handle/bob", Some(&token_a)),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["id"], id_b);
-
-    let missing = Uuid::new_v4();
-    let (status, _) = send(
-        &app.router,
-        get_request(&format!("/users/{missing}"), Some(&token_a)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::NOT_FOUND, "no lookup by handle");
 
     // A cannot read B's own-resources routes even though both are onboarded.
     let (status, _) = send(
@@ -168,34 +184,25 @@ async fn users_lookup_and_ensure_self_guard() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "reading your own library is fine");
+
+    befriend(&app, &token_a, &token_b).await;
+    let (status, body) = send(&app.router, get_profile(&token_a, &id_b)).await;
+    assert_eq!(status, StatusCode::OK, "a friend's profile");
+    assert_eq!(body["handle"], "bob");
+
+    let missing = Uuid::new_v4();
+    let (status, _) = send(&app.router, get_profile(&token_a, &missing.to_string())).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Friendships only form through an invite: the old add-by-handle endpoint is
+/// gone, and rows are stored canonicalized (user_a_id < user_b_id).
 #[tokio::test]
-async fn friendships_are_canonicalized_and_validated() {
+async fn friendships_only_form_through_invites() {
     let app = TestApp::new().await;
-    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
-    let (_token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
 
-    let (status, body) = send(
-        &app.router,
-        json_request(
-            "POST",
-            "/friendships",
-            Some(&token_a),
-            json!({ "user_handle": "bob" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    let (lo, hi) = if id_a < id_b {
-        (&id_a, &id_b)
-    } else {
-        (&id_b, &id_a)
-    };
-    assert_eq!(body["user_a_id"], *lo);
-    assert_eq!(body["user_b_id"], *hi);
-
-    // Idempotent: creating it again succeeds rather than erroring.
     let (status, _) = send(
         &app.router,
         json_request(
@@ -206,31 +213,17 @@ async fn friendships_are_canonicalized_and_validated() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NOT_FOUND, "no add-by-handle");
+    let (_, friends) = send(&app.router, get_request("/me/friends", Some(&token_b))).await;
+    assert_eq!(friends, json!([]), "and it didn't create anything");
 
-    let (status, _) = send(
-        &app.router,
-        json_request(
-            "POST",
-            "/friendships",
-            Some(&token_a),
-            json!({ "user_handle": "alice" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "cannot friend yourself");
-
-    let (status, _) = send(
-        &app.router,
-        json_request(
-            "POST",
-            "/friendships",
-            Some(&token_a),
-            json!({ "user_handle": "nobody-such-handle" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown handle");
+    befriend(&app, &token_a, &token_b).await;
+    let rows = sqlx::query_as::<_, (Uuid, Uuid)>("select user_a_id, user_b_id from friendships")
+        .fetch_all(&app.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].0 < rows[0].1, "canonicalized");
 }
 
 fn normalized_book(source_id: &str, work_id: &str, edition_title: &str) -> Value {
@@ -648,16 +641,7 @@ async fn feed_shows_friends_activity_only() {
     let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
     let (token_c, _id_c) = onboard(&app, "hanko|c", "carol").await;
 
-    send(
-        &app.router,
-        json_request(
-            "POST",
-            "/friendships",
-            Some(&token_a),
-            json!({ "user_handle": "bob" }),
-        ),
-    )
-    .await;
+    befriend(&app, &token_a, &token_b).await;
 
     let book_b = resolve_book(&app, &token_b, "OL-b").await;
     send(
@@ -798,13 +782,25 @@ async fn invites_full_flow() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "body: {friendship}");
+    assert_eq!(friendship["status"], "friends");
+    assert!(friendship["friendship_id"].is_string());
     let (lo, hi) = if id_a < id_b {
         (&id_a, &id_b)
     } else {
         (&id_b, &id_a)
     };
-    assert_eq!(friendship["user_a_id"], *lo);
-    assert_eq!(friendship["user_b_id"], *hi);
+    let row = sqlx::query_as::<_, (Uuid, Uuid)>("select user_a_id, user_b_id from friendships")
+        .fetch_one(&app.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (row.0.to_string(), row.1.to_string()),
+        (lo.clone(), hi.clone())
+    );
+    assert!(
+        friendship.get("user_a_id").is_none() && friendship.get("user_b_id").is_none(),
+        "accepting must not hand back either user's id"
+    );
 
     // Single-use: the same token can't be accepted again, by anyone.
     let (status, _) = send(
@@ -901,16 +897,7 @@ async fn library_is_visible_to_friends_only_when_shared() {
     assert_eq!(status, StatusCode::OK);
 
     // alice <-> bob are friends; carol is a stranger.
-    send(
-        &app.router,
-        json_request(
-            "POST",
-            "/friendships",
-            Some(&token_b),
-            json!({ "user_handle": "alice" }),
-        ),
-    )
-    .await;
+    befriend(&app, &token_a, &token_b).await;
 
     let library = format!("/users/{id_a}/library");
 
@@ -1513,6 +1500,240 @@ async fn reading_stats_count_completions_not_backlog() {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, s) = stats("").await;
     assert!(s["goal"].is_null());
+}
+
+/// Single-use invites connect immediately; already being friends is a success
+/// that doesn't use the invite up; `GET /invites` lists what's still usable.
+#[tokio::test]
+async fn single_use_invites_connect_instantly_and_dont_burn_on_repeat() {
+    let app = TestApp::new().await;
+    let (token_a, _) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, _) = onboard(&app, "hanko|c", "carol").await;
+
+    let create = || json_request("POST", "/invites", Some(&token_a), json!({}));
+    let accept = |token: &str, who: &str| {
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(who),
+            json!({}),
+        )
+    };
+
+    let (_, first) = send(&app.router, create()).await;
+    assert_eq!(first["reusable"], false);
+    let first_token = first["token"].as_str().unwrap();
+    assert_eq!(first_token.len(), 16, "short token for a single-use QR");
+
+    let (_, preview) = send(
+        &app.router,
+        get_request(&format!("/invites/{first_token}"), None),
+    )
+    .await;
+    assert_eq!(preview["requires_approval"], false);
+
+    let (status, joined) = send(&app.router, accept(first_token, &token_b)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(joined["status"], "friends");
+
+    // Bob is already a friend: a second invite from Alice, accepted by Bob again,
+    // succeeds and leaves the invite unused for someone else.
+    let (_, second) = send(&app.router, create()).await;
+    let second_token = second["token"].as_str().unwrap();
+    let (status, again) = send(&app.router, accept(second_token, &token_b)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["status"], "friends");
+    assert_eq!(again["friendship_id"], joined["friendship_id"]);
+
+    let (_, mine) = send(&app.router, get_request("/invites", Some(&token_a))).await;
+    let mine = mine.as_array().unwrap();
+    assert_eq!(
+        mine.len(),
+        1,
+        "the spent invite is gone, the untouched one remains"
+    );
+    assert_eq!(mine[0]["token"], second_token);
+    assert_eq!(mine[0]["reusable"], false);
+    assert_eq!(mine[0]["use_count"], 0);
+
+    let (status, carol) = send(&app.router, accept(second_token, &token_c)).await;
+    assert_eq!(status, StatusCode::OK, "still usable: {carol}");
+    assert_eq!(carol["status"], "friends");
+}
+
+/// Reusable ("anyone with the link") invites: each accept is only a *request*
+/// until the issuer approves; requests reveal only a name + photo (never an id
+/// or handle); decline/approve are owner-only; revoking kills the link.
+#[tokio::test]
+async fn reusable_invites_need_the_issuers_approval() {
+    let app = TestApp::new().await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, _id_c) = onboard(&app, "hanko|c", "carol").await;
+    let (token_d, _id_d) = onboard(&app, "hanko|d", "dave").await;
+
+    let (status, invite) = send(
+        &app.router,
+        json_request("POST", "/invites?reusable=true", Some(&token_a), json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {invite}");
+    assert_eq!(invite["reusable"], true);
+    let token = invite["token"].as_str().unwrap().to_string();
+    assert_eq!(
+        token.len(),
+        32,
+        "full-strength token for a link that gets passed around"
+    );
+    let expires: chrono::DateTime<chrono::Utc> =
+        invite["expires_at"].as_str().unwrap().parse().unwrap();
+    assert!(expires > chrono::Utc::now() + chrono::Duration::days(29));
+
+    // Public preview: only name, photo, and that approval is needed.
+    let (_, preview) = send(&app.router, get_request(&format!("/invites/{token}"), None)).await;
+    assert_eq!(preview["requires_approval"], true);
+    let mut keys: Vec<_> = preview.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["avatar_url", "display_name", "requires_approval"]);
+
+    let accept = |who: &str| {
+        json_request(
+            "POST",
+            &format!("/invites/{token}/accept"),
+            Some(who),
+            json!({}),
+        )
+    };
+    let friends_of = |who: &str| get_request("/me/friends", Some(who));
+
+    // Bob asks (twice — idempotent) and Carol asks: nobody is a friend yet.
+    let (status, pending) = send(&app.router, accept(&token_b)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["status"], "pending");
+    assert!(pending["friendship_id"].is_null());
+    let (_, again) = send(&app.router, accept(&token_b)).await;
+    assert_eq!(again["status"], "pending");
+    send(&app.router, accept(&token_c)).await;
+    for who in [&token_a, &token_b, &token_c] {
+        let (_, friends) = send(&app.router, friends_of(who)).await;
+        assert_eq!(friends, json!([]), "asking isn't befriending");
+    }
+
+    // What Alice sees: two requests, each with only a name and photo.
+    let (_, requests) = send(
+        &app.router,
+        get_request("/me/friend-requests", Some(&token_a)),
+    )
+    .await;
+    let requests = requests.as_array().unwrap();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the repeat ask didn't duplicate: {requests:?}"
+    );
+    let mut keys: Vec<_> = requests[0].as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, ["avatar_url", "created_at", "display_name", "id"]);
+    let id_of = |name: &str| {
+        requests.iter().find(|r| r["display_name"] == name).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (bob_req, carol_req) = (id_of("bob"), id_of("carol"));
+    assert!(
+        !requests.iter().any(|r| r.to_string().contains(&id_b)),
+        "a request must not leak the requester's user id"
+    );
+
+    let (_, mine) = send(&app.router, get_request("/invites", Some(&token_a))).await;
+    assert_eq!(mine[0]["reusable"], true);
+    assert_eq!(mine[0]["pending_requests"], 2);
+    assert_eq!(mine[0]["use_count"], 0);
+
+    // Only the issuer can decide.
+    let decide = |who: &str, verb: &str, id: &str| {
+        json_request(
+            "POST",
+            &format!("/friend-requests/{id}/{verb}"),
+            Some(who),
+            json!({}),
+        )
+    };
+    let (status, _) = send(&app.router, decide(&token_b, "approve", &bob_req)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the requester can't approve themselves"
+    );
+    let (status, _) = send(&app.router, decide(&token_c, "approve", &bob_req)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nor can a bystander");
+
+    // Approve Bob: mutual friends, the invite counts one use, and it can't be repeated.
+    let (status, approved) = send(&app.router, decide(&token_a, "approve", &bob_req)).await;
+    assert_eq!(status, StatusCode::OK, "body: {approved}");
+    assert_eq!(approved["status"], "friends");
+    for who in [&token_a, &token_b] {
+        let (_, friends) = send(&app.router, friends_of(who)).await;
+        assert_eq!(friends.as_array().unwrap().len(), 1);
+    }
+    let (status, _) = send(&app.router, decide(&token_a, "approve", &bob_req)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "already decided");
+    let (_, mine) = send(&app.router, get_request("/invites", Some(&token_a))).await;
+    assert_eq!(mine[0]["use_count"], 1);
+    assert_eq!(mine[0]["pending_requests"], 1);
+
+    // Decline Carol: not a friend, and asking again looks the same as pending.
+    let (status, _) = send(&app.router, decide(&token_a, "decline", &carol_req)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, retry) = send(&app.router, accept(&token_c)).await;
+    assert_eq!(retry["status"], "pending", "a decline isn't revealed");
+    let (_, friends) = send(&app.router, friends_of(&token_c)).await;
+    assert_eq!(friends, json!([]));
+    let (_, requests) = send(
+        &app.router,
+        get_request("/me/friend-requests", Some(&token_a)),
+    )
+    .await;
+    assert_eq!(requests, json!([]), "a declined request doesn't come back");
+
+    // Reusable means it still works for Dave...
+    let (_, dave) = send(&app.router, accept(&token_d)).await;
+    assert_eq!(dave["status"], "pending");
+
+    // ...until Alice revokes it. Only she can, and it's idempotent.
+    let revoke = |who: &str| {
+        json_request(
+            "DELETE",
+            &format!("/invites/{token}"),
+            Some(who),
+            json!(null),
+        )
+    };
+    let (status, _) = send(&app.router, revoke(&token_b)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "not your invite");
+    let (status, _) = send(&app.router, revoke(&token_a)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send(&app.router, revoke(&token_a)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send(&app.router, get_request(&format!("/invites/{token}"), None)).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "revoked links stop previewing"
+    );
+    let (status, _) = send(&app.router, accept(&token_d)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "and stop working");
+    let (_, mine) = send(&app.router, get_request("/invites", Some(&token_a))).await;
+    assert_eq!(mine, json!([]));
+    // Dave's request from before the revoke can still be decided.
+    let (_, requests) = send(
+        &app.router,
+        get_request("/me/friend-requests", Some(&token_a)),
+    )
+    .await;
+    assert_eq!(requests.as_array().unwrap().len(), 1);
 }
 
 /// The self-accept rejection happens *after* the token is atomically claimed

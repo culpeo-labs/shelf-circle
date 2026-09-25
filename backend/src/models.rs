@@ -161,12 +161,6 @@ pub struct CreateRecommendation {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateFriendship {
-    /// The other person's handle; the caller is taken from the auth token.
-    pub user_handle: String,
-}
-
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Friendship {
     pub id: Uuid,
@@ -182,6 +176,9 @@ pub struct Friendship {
 pub struct Invite {
     pub token: String,
     pub expires_at: DateTime<Utc>,
+    /// True for an "anyone with the link" invite (several people may use it and
+    /// each needs the issuer's approval); false for a single-use invite.
+    pub reusable: bool,
 }
 
 /// Response for `GET /invites/{token}` (public, no auth): just enough for the
@@ -191,4 +188,7 @@ pub struct Invite {
 pub struct InvitePreview {
     pub display_name: String,
     pub avatar_url: Option<String>,
+    /// Accepting sends a request the inviter must approve (reusable invites)
+    /// instead of connecting you immediately.
+    pub requires_approval: bool,
 }

@@ -1,5 +1,6 @@
 import { apiFetch } from './client';
 import type {
+  AcceptResult,
   AvatarUploadTicket,
   Book,
   BookLibraryLink,
@@ -8,9 +9,10 @@ import type {
   BookWithEdition,
   CreateRecommendationInput,
   CreateUserInput,
-  Friendship,
+  FriendRequest,
   Invite,
   InvitePreview,
+  MyInvite,
   LibraryEntry,
   LibrarySystem,
   LibraryShelf,
@@ -43,16 +45,33 @@ export const getUser = (id: UUID) => apiFetch<User>(`/users/${id}`);
 /** Everyone the caller is friends with, whichever side created the invite. */
 export const listFriends = () => apiFetch<User[]>('/me/friends');
 
-/** Creates a new invite token for the caller (share as a QR code or link). */
-export const createInvite = () => apiFetch<Invite>('/invites', { method: 'POST' });
+/** Creates a new invite (share as a QR code or link). Single-use by default;
+ * `reusable` makes an "anyone with the link" invite whose joiners you approve. */
+export const createInvite = (reusable = false) =>
+  apiFetch<Invite>('/invites', { method: 'POST', query: reusable ? { reusable: 'true' } : {} });
 
-/** Public — no auth token needed. 404 if the token is invalid/expired/used. */
+export const listMyInvites = () => apiFetch<MyInvite[]>('/invites');
+
+/** Stops an invite from being used (yours only). */
+export const revokeInvite = (token: string) =>
+  apiFetch<void>(`/invites/${encodeURIComponent(token)}`, { method: 'DELETE' });
+
+/** Public — no auth token needed. 404 if the token is invalid/expired/used/revoked. */
 export const getInvitePreview = (token: string) =>
   apiFetch<InvitePreview>(`/invites/${encodeURIComponent(token)}`);
 
-/** Accepts an invite: creates the friendship, marks the token used. */
+/** Accepts an invite: `friends` right away for a single-use invite, `pending`
+ * for a reusable one until the inviter approves. */
 export const acceptInvite = (token: string) =>
-  apiFetch<Friendship>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
+  apiFetch<AcceptResult>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST' });
+
+export const listFriendRequests = () => apiFetch<FriendRequest[]>('/me/friend-requests');
+
+export const approveFriendRequest = (id: UUID) =>
+  apiFetch<AcceptResult>(`/friend-requests/${id}/approve`, { method: 'POST' });
+
+export const declineFriendRequest = (id: UUID) =>
+  apiFetch<void>(`/friend-requests/${id}/decline`, { method: 'POST' });
 
 export const searchBooks = (q: string, limit = 20) =>
   apiFetch<BookSearchResult[]>('/books/search', { query: { q, limit } });

@@ -13,7 +13,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/users", post(create_user))
         .route("/users/{id}", get(get_user))
-        .route("/users/by-handle/{handle}", get(get_user_by_handle))
 }
 
 /// Create the profile for the authenticated token (onboarding). The Hanko user
@@ -49,31 +48,32 @@ async fn create_user(
     Ok(Json(user))
 }
 
+/// A profile: your own, or a friend's. Anyone else is a 404 — there's no
+/// looking people up by id (or by handle: that endpoint no longer exists), so
+/// being signed in isn't enough to see who someone is.
 async fn get_user(
     State(pool): State<PgPool>,
-    _caller: CurrentUser,
+    CurrentUser(me): CurrentUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<User>> {
+    if id != me.id {
+        let (low, high) = if me.id < id { (me.id, id) } else { (id, me.id) };
+        let friends = sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from friendships where user_a_id = $1 and user_b_id = $2)",
+        )
+        .bind(low)
+        .bind(high)
+        .fetch_one(&pool)
+        .await?;
+        if !friends {
+            return Err(ApiError::NotFound);
+        }
+    }
+
     let user = sqlx::query_as::<_, User>(
         "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where id = $1",
     )
     .bind(id)
-    .fetch_optional(&pool)
-    .await?
-    .ok_or(ApiError::NotFound)?;
-
-    Ok(Json(user))
-}
-
-async fn get_user_by_handle(
-    State(pool): State<PgPool>,
-    _caller: CurrentUser,
-    Path(handle): Path<String>,
-) -> ApiResult<Json<User>> {
-    let user = sqlx::query_as::<_, User>(
-        "select id, handle, display_name, avatar_url, locale, share_shelves, created_at from users where handle = $1",
-    )
-    .bind(handle)
     .fetch_optional(&pool)
     .await?
     .ok_or(ApiError::NotFound)?;

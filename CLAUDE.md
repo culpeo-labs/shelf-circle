@@ -56,7 +56,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   exposing a `router()`; wired in `routes/mod.rs`. Each file self-contains its
   response structs. `friendships::upsert_friendship` (the canonicalized
   insert-or-noop) is `pub` and shared with `invites::accept_invite` — don't
-  reimplement it a third time. `GET /me/friends` (same file) lists friends from
+  reimplement it a third time (it's the only place friendships are created).
+  `GET /me/friends` (same file) lists friends from
   either side of the canonicalized row — the app's friend list reads it (an
   invite's creator has no other way to learn who accepted).
 - `migrations/` — `0001_init.sql` (v1 schema), `0002_activity_events.sql`
@@ -117,10 +118,42 @@ friendships (canonicalized `user_a_id < user_b_id`), canonical `books` with
 multi-language `book_editions`, per-user `book_statuses` (want_to_read /
 currently_reading / finished / did_not_finish, plus optional `rating` 1-5),
 `recommendations` (the "X recommended a book to you" inbox), `activity_events`
-(append-only timeline log), and `invite_tokens` (single-use, 7-day-lived
-tokens backing QR-code/deep-link friend adding — `created_by_user_id`,
-`used_at`/`used_by_user_id` nullable until redeemed). `reactions` table exists
+(append-only timeline log), `invite_tokens` (QR-code/deep-link friend adding,
+single-use or reusable — see **Friends & invites**), and `friend_requests`
+(pending approvals for reusable invites). `reactions` table exists
 but has no routes yet.
+
+### Friends & invites
+
+- **A friendship only forms with both people involved.** It's mutual and opens
+  up your timeline (and shelves, if shared), so there is deliberately **no
+  add-by-handle** (`POST /friendships` and `GET /users/by-handle/{handle}` were
+  removed) and **no profile lookup by id for strangers**: `GET /users/{id}` is
+  your own or a friend's profile, else 404. Being signed in isn't enough to
+  learn who someone is.
+- **Two invite modes** (`POST /invites[?reusable=true]`, `invite_tokens.max_uses`
+  / `use_count` / `requires_approval` / `revoked_at`, migration `0013`):
+  - *single-use* (default): 16-hex token, 7 days, the first accept connects you
+    immediately — the issuer chose whom to hand it to.
+  - *reusable* ("anyone with the link"): 32-hex (full-strength) token, 30 days,
+    revocable (`DELETE /invites/{token}`); each accept only creates a
+    **`friend_requests` row** (`pending`) that the issuer approves/declines
+    (`GET /me/friend-requests`, `POST /friend-requests/{id}/approve|decline`).
+    A declined requester who retries still sees `pending` (declines aren't
+    revealed). Requests show only display name + photo — no handle, no id.
+  - `GET /invites` lists your usable invites (`use_count`, `pending_requests`);
+    `GET /invites/{token}` is the public preview: display name, avatar,
+    `requires_approval` — never a handle or id.
+  - Accepting locks the invite row (`for update`) so the capacity check and the
+    `use_count` bump are atomic (concurrent accepts of a single-use token: one
+    wins). Accepting your own invite is a 400 that rolls back (doesn't burn the
+    token); already being friends returns `friends` without using the invite up.
+    Accept/approve return `{status: friends|pending, friendship_id}` — an opaque
+    friendship id, **not a user id**.
+- **Not done yet (see the user-id follow-up):** other users' `id`/`handle` are
+  still returned to *friends* (friends list, feed actors, recommendations).
+  The intended end state is that no user id is ever returned to anyone else —
+  friends referenced by friendship id — with the handle visible to friends only.
 
 ### Auth
 
@@ -136,8 +169,7 @@ but has no routes yet.
   `users` row by `hanko_user_id`; no row → **403**). Both `FromRequestParts`
   (axum 0.8, no `#[async_trait]`).
 - The acting user comes from the token, never the body: `SetBookStatus` /
-  `CreateRecommendation` / `CreateFriendship` dropped `user_id` / `from_user_id` /
-  the second handle. `/users/{user_id}/…` routes call `ensure_self(&me, user_id)`
+  `CreateRecommendation` dropped `user_id` / `from_user_id`. `/users/{user_id}/…` routes call `ensure_self(&me, user_id)`
   (feed, library, inbox, book-statuses list) → 403 on mismatch. **Exception:**
   `/users/{id}/library` also allows a *friend* of the owner when
   `users.share_shelves` is true (`library::ensure_can_view_library`; the owner

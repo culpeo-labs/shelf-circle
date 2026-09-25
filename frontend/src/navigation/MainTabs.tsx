@@ -2,6 +2,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';
 import { Text } from 'react-native';
 
+import { useFriendRequests } from '../hooks/queries';
 import { useRecommendationsBadge } from '../hooks/useRecommendationsBadge';
 import { FriendsScreen } from '../screens/friends/FriendsScreen';
 import { MeScreen } from '../screens/me/MeScreen';
@@ -22,6 +23,7 @@ const ICONS: Record<keyof MainTabParamList, string> = {
 
 export function MainTabs() {
   const { unseenCount } = useRecommendationsBadge();
+  const pendingRequests = useFriendRequests().data?.length ?? 0;
 
   return (
     <Tab.Navigator
@@ -39,7 +41,14 @@ export function MainTabs() {
         component={RecommendationsScreen}
         options={{ title: 'Recs', tabBarBadge: unseenCount > 0 ? unseenCount : undefined }}
       />
-      <Tab.Screen name="Friends" component={FriendsScreen} options={{ title: 'Friends' }} />
+      <Tab.Screen
+        name="Friends"
+        component={FriendsScreen}
+        options={{
+          title: 'Friends',
+          tabBarBadge: pendingRequests > 0 ? pendingRequests : undefined,
+        }}
+      />
       <Tab.Screen name="Me" component={MeScreen} options={{ title: 'Me' }} />
     </Tab.Navigator>
   );
