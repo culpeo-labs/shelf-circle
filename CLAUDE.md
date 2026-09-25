@@ -198,8 +198,18 @@ but has no routes yet.
   (`catalogs/matching.rs`: normalized title — subtitle-tolerant but two main
   titles never fuzzy-match each other, so "Dune" ≠ "Dune Messiah" — plus author
   surname and compatible language), preferring the exact edition (one of our
-  ISBNs), then plain book > large print > ebook > other. Only if nothing
-  matches are up to 2 ISBNs tried on their own (catches retitled editions).
+  ISBNs), then a record in the book's language (a preference, not a filter —
+  a Spanish-only holding still beats nothing), then plain book > large print >
+  ebook > other. Only if nothing matches are up to 2 ISBNs tried on their own.
+- **Translations:** Open Library files every translation under one work, so a
+  book can be titled "Cien años de soledad" while its saved edition is the
+  English "One Hundred Years of Solitude" (and the catalog lists each under its
+  own title). The lookup therefore searches under every distinct title we have
+  (`book_editions.title`, max 3 searches, pooled), and a record matches under
+  any of them. Only the primary title's search failing is fatal
+  (`lookup_failed`); an alternate's failure just means fewer candidates.
+  Limits: authorless/ISBN-less junk works (e.g. Open Library's bare "100 años de
+  soledad") can't be verified and fall back to the search link.
 - **Adding a library** on an existing kind = one `SYSTEMS` entry (id is stored
   on users — never rename). **New kind of catalog** (Libby/OverDrive, Sierra…)
   = a module in `catalogs/`, a `Kind` variant, and an arm in

@@ -1216,6 +1216,49 @@ async fn library_link_matches_the_work_with_search_fallback() {
         "https://seattle.bibliocommons.com/v2/search?query=Unfindable%20Tome%20Andy%20Weir&searchType=smart"
     );
 
+    // Translated work: filed under its Spanish title, saved edition is the
+    // English translation. Search under both titles and prefer our language.
+    let mut translated = normalized_book("OL5W", "OL5W", "One Hundred Years of Solitude");
+    translated["canonical_title"] = json!("Cien años de soledad");
+    translated["primary_author"] = json!("Gabriel García Márquez");
+    let (_, translated) = send(
+        &app.router,
+        json_request("POST", "/books/resolve", Some(&token), translated),
+    )
+    .await;
+    on_query("Cien años de soledad Gabriel García Márquez")
+        .respond_with(results(vec![bib(
+            "S30SP",
+            "BK",
+            "Cien años de soledad",
+            json!(["García Márquez, Gabriel"]),
+            "9788400000000",
+            "spa",
+        )]))
+        .mount(&app.catalog_server)
+        .await;
+    on_query("One Hundred Years of Solitude Gabriel García Márquez")
+        .respond_with(results(vec![bib(
+            "S30EN",
+            "EBOOK",
+            "One Hundred Years of Solitude",
+            json!(["García Márquez, Gabriel"]),
+            "9780060000000",
+            "eng",
+        )]))
+        .mount(&app.catalog_server)
+        .await;
+    let (_, link) = send(
+        &app.router,
+        get_request(&link_of(&translated), Some(&token)),
+    )
+    .await;
+    assert_eq!(link["found"], true, "body: {link}");
+    assert_eq!(
+        link["url"], "https://seattle.bibliocommons.com/v2/record/S30EN",
+        "English edition preferred for an English-language book"
+    );
+
     // Catalog down → still 200 with a usable link, flagged as a failed lookup.
     let (status, _) = send(&app.router, put(json!({ "library_system": "kcls" }))).await;
     assert_eq!(status, StatusCode::OK);
