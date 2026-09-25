@@ -16,6 +16,8 @@ import type {
   LibraryShelf,
   MyLibrarySystem,
   FeedItem,
+  ReadingGoal,
+  ReadingStats,
   Recommendation,
   ResolvedBookInput,
   SetBookStatusInput,
@@ -99,3 +101,15 @@ export const setMyLibrarySystem = (id: string | null) =>
 /** Needs a library chosen first (400 otherwise). */
 export const getBookLibraryLink = (bookId: UUID) =>
   apiFetch<BookLibraryLink>(`/books/${bookId}/library-link`);
+
+export const getReadingStats = (year: number, tz: string) =>
+  apiFetch<ReadingStats>('/me/reading-stats', { query: { year, tz } });
+
+export const setReadingGoal = (year: number, targetCount: number, timeZone: string) =>
+  apiFetch<ReadingGoal>(`/me/reading-goals/${year}`, {
+    method: 'PUT',
+    body: { target_count: targetCount, time_zone: timeZone },
+  });
+
+export const deleteReadingGoal = (year: number) =>
+  apiFetch<void>(`/me/reading-goals/${year}`, { method: 'DELETE' });

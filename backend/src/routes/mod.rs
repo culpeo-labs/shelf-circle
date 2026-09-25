@@ -5,6 +5,7 @@ mod invites;
 mod library;
 mod library_systems;
 mod me;
+mod reading;
 mod recommendations;
 mod statuses;
 mod users;
@@ -21,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .merge(invites::router())
         .merge(books::router())
         .merge(statuses::router())
+        .merge(reading::router())
         .merge(recommendations::router())
         .merge(feed::router())
         .merge(library::router())

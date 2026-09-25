@@ -1,10 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/AuthContext';
 import { Avatar } from '../../components/Avatar';
+import { ReadingYearCard } from '../../components/ReadingYearCard';
 import { useMyLibrarySystem, useUpdateMe } from '../../hooks/queries';
 import type { RootStackParamList } from '../../navigation/types';
 
@@ -16,13 +17,15 @@ export function MeScreen() {
   if (!user) return null;
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Avatar url={user.avatar_url} name={user.display_name} size={80} />
       <Text style={styles.name}>{user.display_name}</Text>
       <Text style={styles.handle}>@{user.handle}</Text>
       <Pressable onPress={() => navigation.navigate('EditProfile')} style={styles.editButton}>
         <Text style={styles.editText}>Edit profile</Text>
       </Pressable>
+
+      <ReadingYearCard />
 
       <View style={styles.section}>
         <Pressable onPress={() => navigation.navigate('ChooseLibrary')}>
@@ -56,7 +59,7 @@ export function MeScreen() {
       <Pressable style={styles.signOutButton} onPress={() => void signOut()}>
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -70,7 +73,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', padding: 32, paddingTop: 48, gap: 4 },
+  container: { flexGrow: 1, alignItems: 'center', padding: 32, paddingTop: 48, gap: 4 },
   name: { fontSize: 22, fontWeight: '700', color: '#2b2a26', marginTop: 12 },
   handle: { fontSize: 14, color: '#6b6456' },
   editButton: { marginTop: 12, paddingVertical: 6, paddingHorizontal: 16 },

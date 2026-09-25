@@ -21,6 +21,23 @@ export interface User {
   created_at: Timestamp;
 }
 
+/** GET /me/reading-stats — completions in a calendar year, read in `time_zone`. */
+export interface ReadingStats {
+  year: number;
+  time_zone: string;
+  /** Books finished that year; rereads count each time, backlog (backdated) entries don't. */
+  completed: number;
+  /** Per month, January first. */
+  by_month: number[];
+  goal: ReadingGoal | null;
+}
+
+export interface ReadingGoal {
+  year: number;
+  target_count: number;
+  time_zone: string;
+}
+
 /** PATCH /me body — only the fields present change. */
 export interface UpdateMeInput {
   share_shelves?: boolean;

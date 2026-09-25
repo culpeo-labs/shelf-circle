@@ -92,6 +92,44 @@ export function useBookLibraryLink(bookId: UUID | undefined, libraryId: string |
   });
 }
 
+/** The device's IANA time zone, so year boundaries match the user's calendar. */
+export function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+export function useReadingStats(year: number) {
+  const { user } = useAuth();
+  const tz = deviceTimeZone();
+  return useQuery({
+    queryKey: ['reading-stats', user?.id, year, tz],
+    queryFn: () => api.getReadingStats(year, tz),
+    enabled: !!user,
+  });
+}
+
+function useReadingGoalMutation<TInput>(fn: (input: TInput) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reading-stats', user?.id] }),
+  });
+}
+
+export function useSetReadingGoal() {
+  return useReadingGoalMutation(({ year, target }: { year: number; target: number }) =>
+    api.setReadingGoal(year, target, deviceTimeZone()),
+  );
+}
+
+export function useDeleteReadingGoal() {
+  return useReadingGoalMutation((year: number) => api.deleteReadingGoal(year));
+}
+
 export function useBookStatuses() {
   const { user } = useAuth();
   return useQuery({
@@ -154,6 +192,7 @@ function useInvalidateAfterStatusChange() {
     void queryClient.invalidateQueries({ queryKey: ['library', user.id] });
     void queryClient.invalidateQueries({ queryKey: ['book-statuses', user.id] });
     void queryClient.invalidateQueries({ queryKey: ['feed', user.id] });
+    void queryClient.invalidateQueries({ queryKey: ['reading-stats', user.id] });
   };
 }
 

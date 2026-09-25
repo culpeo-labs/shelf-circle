@@ -71,7 +71,9 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   false` — persists the same flag on the row itself, for a "logged as
   backlog" badge; see **Timeline / feed**), `0009_share_shelves.sql`
   (`users.share_shelves boolean not null default false`), `0010_library_system.sql`
-  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK). UUID default is
+  (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK),
+  `0012_book_completions_and_goals.sql` (`book_completions` + `reading_goals`; see
+  **Reading completions & goals**; `0011` is reserved by the in-flight book-description work). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -203,6 +205,42 @@ but has no routes yet.
   id, not necessarily the obvious one (`spl` is a Canadian library; Seattle is
   `seattle`). Tests point it at a wiremock via
   `Catalogs::with_biblio_commons_gateway`.
+
+### Reading completions & goals
+
+- **`book_completions`** (`0012`): one row per *finish* — `(user_id, book_id,
+  completed_at, backdated)`. Written by a trigger on `book_statuses` whenever a
+  row moves **to** `finished` (insert or status change), carrying that row's
+  `backdated` flag. This is the source of truth for counts; do **not** count
+  `book_statuses` (one row per book: rereads overwrite it, `updated_at` moves on
+  any write) or `activity_events` (the friends' feed: backdated reads are
+  suppressed from it entirely, and its semantics should stay free to change).
+- **Counting rules:** `not backdated` only; every finish counts, so a reread is
+  a second completion (also same-year). A backlog book read before the app is
+  recorded as `backdated = true` and excluded — until it's reread, since leaving
+  and re-entering `finished` is a status change whose write isn't backdated.
+  Re-submitting the same status (rating edit) adds nothing. **Undo window:**
+  moving *away* from `finished` within 1 hour of that finish deletes it (a
+  misclick can't inflate a count); later than that, the completion stays.
+  Backfilled from `activity_events` finishes (dates approximate for rows that
+  came from 0002's own backfill) plus backdated `book_statuses` rows.
+- **Time zones:** timestamps are UTC instants; a year is
+  `[make_timestamptz(y,1,1,…,tz), make_timestamptz(y+1,1,1,…,tz))`, so the app
+  passes the device's IANA zone (`tz`), validated against `pg_timezone_names`.
+- **`reading_goals`**: `(user_id, starts_on, ends_on inclusive, time_zone,
+  target_count)`, unique per period. Period-based on purpose. API: `GET
+  /me/reading-stats?year=&tz=` → `{year, time_zone, completed, by_month[12],
+  goal}`; `PUT|DELETE /me/reading-goals/{year}` (calendar-year goals only for now).
+- **Where challenges / lists would slot in (not built):** every target is "a
+  user's non-backdated completions in a period, in a zone, optionally
+  restricted to a set of books". A *friends' challenge* = a shared goal
+  definition + a participants table (each participant's progress is that same
+  query for their own user); a *"read N from this list"* challenge = a `lists` /
+  `list_books` pair and a `book_id in (list)` filter on the same count. Neither
+  needs to change `book_completions`; add `challenges`/`challenge_participants`
+  (referencing or generalising `reading_goals`) when they're real. Friends
+  seeing each other's counts should follow the `share_shelves` opt-in (or its own
+  setting) — stats are self-only today.
 
 ### Ratings
 
