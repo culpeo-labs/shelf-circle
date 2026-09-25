@@ -29,7 +29,7 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   extractors + `ensure_self`. See **Auth** below.
 - `src/catalogs/` — "get it at your library" plugins. `mod.rs` = the
   `SYSTEMS` registry (`LibrarySystem { id, name, kind }`: Seattle Public
-  Library `seattle`, King County `kcls`), `Catalogs` (ISBN lookup with a 1h
+  Library `seattle`, King County `kcls`), `Catalogs` (`find_book` by title/author with ISBN preference, 1h
   in-process cache) and `search_url`; `biblio_commons.rs` = the only `Kind`
   so far. See **Library catalogs**.
 - `src/storage.rs` — `AvatarStorage`: Azure Blob avatar uploads. Mints a
@@ -186,11 +186,20 @@ but has no routes yet.
 - User picks a library system (`GET /library-systems`, `GET|PUT
   /me/library-system`); `GET /books/{id}/library-link` then returns
   `{library, found, lookup_failed, url}`: `url` is the catalog **record page**
-  when a search of the catalog by the book's ISBNs (ISBN-13s first, max 4)
-  finds an edition carrying that ISBN, else a **title+author catalog search**.
+  when the catalog has the *work*, else a **title+author catalog search**.
   Always 200 with a usable `url` — a slow/down catalog only sets
   `lookup_failed` (400 only if no library is chosen). Named `library_systems`
   in code to avoid confusion with `routes/library.rs` (a user's bookshelves).
+- **Match by work (title + author), not by ISBN.** We store one representative
+  edition per book (Open Library's first English one, often a UK/odd printing)
+  and libraries hold other printings: ISBN-first matched **1 of 18** popular
+  titles in Seattle's catalog; title+author matched 18/18. So a lookup is: search
+  `main title + author`, accept records that are the same work
+  (`catalogs/matching.rs`: normalized title — subtitle-tolerant but two main
+  titles never fuzzy-match each other, so "Dune" ≠ "Dune Messiah" — plus author
+  surname and compatible language), preferring the exact edition (one of our
+  ISBNs), then plain book > large print > ebook > other. Only if nothing
+  matches are up to 2 ISBNs tried on their own (catches retitled editions).
 - **Adding a library** on an existing kind = one `SYSTEMS` entry (id is stored
   on users — never rename). **New kind of catalog** (Libby/OverDrive, Sierra…)
   = a module in `catalogs/`, a `Kind` variant, and an arm in
