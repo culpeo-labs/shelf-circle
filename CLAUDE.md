@@ -33,7 +33,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   in-process cache) and `search_url`; `biblio_commons.rs` = the only `Kind`
   so far. See **Library catalogs**.
 - `src/storage.rs` — `AvatarStorage`: Azure Blob avatar uploads. Mints a
-  10-minute, write-only (`sp=cw`) SAS URL for `<user-uuid>/<random-uuid>.jpg`,
+  10-minute, write-only (`sp=cw`) SAS URL for `<avatar_key>/<random-uuid>.jpg` (`users.avatar_key`, a random
+  key — **not** the user id, which the photo URL would otherwise expose),
   HMAC-signed with the storage account key (no Azure SDK); `owns_avatar_url`
   is what `PATCH /me` uses to accept only URLs this API minted for the caller.
   Config: `AZURE_STORAGE_ACCOUNT` + `AZURE_STORAGE_KEY` (+ optional
@@ -75,7 +76,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   (`users.library_system text` — a `catalogs::SYSTEMS` id, validated in code, not a FK),
   `0011_book_description.sql` (`books.description` + `description_checked_at`; see
   **Book descriptions**), `0012_book_completions_and_goals.sql` (`book_completions` +
-  `reading_goals`; see **Reading completions & goals**). UUID default is
+  `reading_goals`; see **Reading completions & goals**), `0013_invite_modes_and_friend_requests.sql`
+  (see **Friends & invites**), `0014_avatar_key.sql` (`users.avatar_key`). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -170,12 +172,11 @@ but has no routes yet.
   (axum 0.8, no `#[async_trait]`).
 - The acting user comes from the token, never the body: `SetBookStatus` /
   `CreateRecommendation` dropped `user_id` / `from_user_id`. `/users/{user_id}/…` routes call `ensure_self(&me, user_id)`
-  (feed, library, inbox, book-statuses list) → 403 on mismatch. **Exception:**
-  `/users/{id}/library` also allows a *friend* of the owner when
-  `users.share_shelves` is true (`library::ensure_can_view_library`; the owner
-  toggles it via `PATCH /me { share_shelves }`). Non-friends and unknown ids
-  get the same 403. Only the library opens up — feed/inbox/book-statuses stay
-  self-only.
+  (feed, library, inbox, book-statuses list) → 403 on mismatch. A friend's
+  library is a different route, `GET /friends/{friendship_id}/library`, allowed
+  only when the friend has `users.share_shelves` on (owner toggles it via
+  `PATCH /me { share_shelves }`; 403 if off, 404 if the friendship isn't yours).
+  Only the library opens up — feed/inbox/book-statuses stay self-only.
 - `PATCH /me` edits `display_name` (trimmed, 1–50 chars), `share_shelves`, and
   `avatar_url` (absent = unchanged, `null` = remove, else must satisfy
   `AvatarStorage::owns_avatar_url`). Handle isn't editable. Avatar flow:

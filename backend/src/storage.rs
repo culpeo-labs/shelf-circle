@@ -78,26 +78,29 @@ impl AvatarStorage {
         Self::new(account, &key, container, endpoint).map(Some)
     }
 
-    /// Public URL prefix under which `user_id`'s avatars live.
-    fn user_prefix(&self, user_id: Uuid) -> String {
-        format!("{}/{}/{}/", self.endpoint, self.container, user_id)
+    /// Public URL prefix under which one user's avatars live. `key` is the user's
+    /// random `avatar_key`, deliberately **not** their user id: the photo URL is
+    /// shown to friends and in the public invite preview, so the id must not be
+    /// derivable from it.
+    fn user_prefix(&self, key: Uuid) -> String {
+        format!("{}/{}/{}/", self.endpoint, self.container, key)
     }
 
     /// True only for `<prefix>/<uuid>.jpg` under this user's own prefix — the
     /// exact shape `create_upload` hands out, so a client can't point their
     /// profile at someone else's blob or an arbitrary external URL.
-    pub fn owns_avatar_url(&self, user_id: Uuid, url: &str) -> bool {
-        url.strip_prefix(&self.user_prefix(user_id))
+    pub fn owns_avatar_url(&self, key: Uuid, url: &str) -> bool {
+        url.strip_prefix(&self.user_prefix(key))
             .and_then(|rest| rest.strip_suffix(".jpg"))
             .is_some_and(|id| Uuid::parse_str(id).is_ok())
     }
 
-    pub fn create_upload(&self, user_id: Uuid) -> AvatarUpload {
-        self.create_upload_at(user_id, Uuid::new_v4(), Utc::now())
+    pub fn create_upload(&self, key: Uuid) -> AvatarUpload {
+        self.create_upload_at(key, Uuid::new_v4(), Utc::now())
     }
 
-    fn create_upload_at(&self, user_id: Uuid, blob_id: Uuid, now: DateTime<Utc>) -> AvatarUpload {
-        let blob = format!("{user_id}/{blob_id}.jpg");
+    fn create_upload_at(&self, key: Uuid, blob_id: Uuid, now: DateTime<Utc>) -> AvatarUpload {
+        let blob = format!("{key}/{blob_id}.jpg");
         let avatar_url = format!("{}/{}/{}", self.endpoint, self.container, blob);
         let expires_at = now + UPLOAD_TTL;
         let se = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);

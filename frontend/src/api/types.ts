@@ -176,18 +176,43 @@ export interface LibraryEntry {
 
 export type LibraryShelf = 'reading' | 'read' | 'want_to_read' | 'did_not_finish' | 'all';
 
-export interface Recommendation {
+/**
+ * Friends are referenced by the *friendship* (`friendship_id`, shared only by the
+ * two of you), never by a user id: the API never returns one user's id to
+ * another. `handle` is visible to friends only.
+ */
+export interface Friend {
+  friendship_id: UUID;
+  handle: string;
+  display_name: string;
+  avatar_url: string | null;
+}
+
+/** GET /friends/{friendship_id}. */
+export interface FriendProfile extends Friend {
+  /** Whether they let friends see their bookshelves. */
+  share_shelves: boolean;
+}
+
+/** An entry in your recommendations inbox. */
+export interface RecommendationItem {
   id: UUID;
-  from_user_id: UUID;
-  to_user_id: UUID;
   book_id: UUID;
   note: string | null;
   created_at: Timestamp;
+  from: {
+    /** Null only if you're no longer friends. */
+    friendship_id: UUID | null;
+    handle: string;
+    display_name: string;
+    avatar_url: string | null;
+  };
 }
 
-/** POST /recommendations body — the sender comes from the auth token. */
+/** POST /recommendations body — the sender comes from the auth token, and the
+ * recipient is one of your friends, named by friendship. */
 export interface CreateRecommendationInput {
-  to_user_id: UUID;
+  to_friendship_id: UUID;
   book_id: UUID;
   note?: string | null;
 }
@@ -243,6 +268,13 @@ export interface FeedItem {
   created_at: Timestamp;
   status: ReadingStatus;
   verb: string;
-  actor: { id: UUID; handle: string; display_name: string; avatar_url: string | null };
+  actor: {
+    /** The friendship with this person; null for your own events. Never a user id. */
+    friendship_id: UUID | null;
+    is_me: boolean;
+    handle: string;
+    display_name: string;
+    avatar_url: string | null;
+  };
   book: { id: UUID; title: string; author: string | null; cover_image_url: string | null };
 }

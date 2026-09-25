@@ -143,20 +143,11 @@ pub struct SetBookStatus {
     pub backdated: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
-pub struct Recommendation {
-    pub id: Uuid,
-    pub from_user_id: Uuid,
-    pub to_user_id: Uuid,
-    pub book_id: Uuid,
-    pub note: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CreateRecommendation {
-    /// The sender is taken from the auth token, not the body.
-    pub to_user_id: Uuid,
+    /// The sender is taken from the auth token, not the body. The recipient is one
+    /// of the sender's friends, named by the friendship (never by user id).
+    pub to_friendship_id: Uuid,
     pub book_id: Uuid,
     pub note: Option<String>,
 }
@@ -191,4 +182,26 @@ pub struct InvitePreview {
     /// Accepting sends a request the inviter must approve (reusable invites)
     /// instead of connecting you immediately.
     pub requires_approval: bool,
+}
+
+/// A friend as shown to you. They're referenced by the *friendship* — an opaque
+/// id shared only by the two of you — never by their user id: no API response
+/// returns one user's id to another. `handle` is visible to friends only.
+#[derive(Debug, Serialize, FromRow)]
+pub struct Friend {
+    pub friendship_id: Uuid,
+    pub handle: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+}
+
+/// A friend's profile page.
+#[derive(Debug, Serialize, FromRow)]
+pub struct FriendProfile {
+    pub friendship_id: Uuid,
+    pub handle: String,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+    /// Whether they let friends see their bookshelves.
+    pub share_shelves: bool,
 }
