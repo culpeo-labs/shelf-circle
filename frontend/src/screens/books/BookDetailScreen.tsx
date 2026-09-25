@@ -22,6 +22,9 @@ import type { RootStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookDetail'>;
 
+/** Descriptions longer than this get a Read more toggle. */
+const COLLAPSED_CHARS = 300;
+
 const SHELVES: { key: ReadingStatus; label: string }[] = [
   { key: 'want_to_read', label: 'Want to read' },
   { key: 'currently_reading', label: 'Reading' },
@@ -76,6 +79,8 @@ export function BookDetailScreen({ route }: Props) {
           )}
         </View>
       </View>
+
+      {book.data.description && <Description text={book.data.description} />}
 
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Your shelf</Text>
@@ -156,6 +161,26 @@ export function BookDetailScreen({ route }: Props) {
   );
 }
 
+/** The book's blurb, clamped with a Read more toggle when it's long. Rendered
+ * only when a source had a description. */
+function Description({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > COLLAPSED_CHARS;
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>About this book</Text>
+      <Text style={styles.description} numberOfLines={long && !expanded ? 6 : undefined}>
+        {text}
+      </Text>
+      {long && (
+        <Pressable onPress={() => setExpanded((e) => !e)} hitSlop={8}>
+          <Text style={styles.readMore}>{expanded ? 'Show less' : 'Read more'}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
 /** "Get it at your library": the book's record when the catalog has it, a
  * catalog search otherwise, or a prompt to pick a library first. */
 function LibraryButton({
@@ -210,6 +235,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', color: '#2b2a26' },
   author: { fontSize: 15, color: '#6b6456' },
   section: { gap: 10 },
+  description: { fontSize: 14, lineHeight: 21, color: '#2b2a26' },
+  readMore: { color: '#3b6e5e', fontWeight: '600', fontSize: 14 },
   sectionLabel: { fontSize: 13, fontWeight: '600', color: '#6b6456', textTransform: 'uppercase' },
   shelfRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   shelfOption: {

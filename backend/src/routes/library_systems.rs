@@ -12,12 +12,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::CurrentUser;
-use crate::catalogs::{self, Catalogs, LibrarySystem, LibrarySystemSummary};
+use crate::catalogs::{self, BookQuery, Catalogs, LibrarySystem, LibrarySystemSummary};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
-/// Cap on ISBN lookups per request (a book can accumulate many editions).
-const MAX_ISBN_LOOKUPS: usize = 4;
+/// Cap on ISBNs considered per lookup (a book can accumulate many editions).
+const MAX_ISBNS: usize = 8;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -99,7 +99,8 @@ struct LibraryLink {
 }
 
 /// A link to this book in the caller's chosen library: the record page when
-/// the catalog has one of the book's ISBNs, otherwise a title search. Always
+/// the catalog has this work (matched by title + author, preferring one of the
+/// book's ISBNs), otherwise a title search. Always
 /// answers 200 with a usable `url` — the catalog being down/slow shouldn't
 /// break the book page.
 async fn book_library_link(
@@ -120,42 +121,53 @@ async fn book_library_link(
     .await?
     .ok_or(ApiError::NotFound)?;
 
-    // ISBN-13s first (what catalogs mostly index), then ISBN-10s.
-    let isbns = sqlx::query_as::<_, (Option<String>, Option<String>)>(
-        "select isbn_13, isbn_10 from book_editions where book_id = $1 order by created_at",
+    // Editions on file: ISBN-13s first (what catalogs mostly index), then
+    // ISBN-10s. Used to prefer the exact edition, not to identify the book.
+    let editions = sqlx::query_as::<_, (Option<String>, Option<String>, String, String)>(
+        "select isbn_13, isbn_10, language, title from book_editions where book_id = $1 order by created_at",
     )
     .bind(book_id)
     .fetch_all(&pool)
     .await?;
-    let mut candidates: Vec<String> = Vec::new();
-    for isbn in isbns
+    let mut isbns: Vec<String> = Vec::new();
+    for isbn in editions
         .iter()
-        .filter_map(|(a, _)| a.as_deref())
-        .chain(isbns.iter().filter_map(|(_, b)| b.as_deref()))
+        .filter_map(|(a, ..)| a.as_deref())
+        .chain(editions.iter().filter_map(|(_, b, ..)| b.as_deref()))
     {
         let isbn = catalogs::normalize_isbn(isbn);
-        if !isbn.is_empty() && !candidates.contains(&isbn) {
-            candidates.push(isbn);
+        if !isbn.is_empty() && !isbns.contains(&isbn) {
+            isbns.push(isbn);
         }
     }
-    candidates.truncate(MAX_ISBN_LOOKUPS);
+    isbns.truncate(MAX_ISBNS);
+
+    // Edition titles that differ from the work's (translations) — the catalog
+    // may list the book under one of those instead.
+    let alt_titles: Vec<String> = editions.iter().map(|(.., t)| t.clone()).collect();
+
+    let query = BookQuery {
+        title: &title,
+        alt_titles: &alt_titles,
+        author: author.as_deref(),
+        language: editions.first().map(|(_, _, l, _)| l.as_str()),
+        isbns: &isbns,
+    };
 
     let mut lookup_failed = false;
-    for isbn in &candidates {
-        match catalogs.lookup_isbn(system, isbn).await {
-            Ok(Some(found)) => {
-                return Ok(Json(LibraryLink {
-                    library: system.into(),
-                    found: true,
-                    lookup_failed: false,
-                    url: found.url,
-                }));
-            }
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!("library lookup ({}, isbn {isbn}) failed: {e}", system.id);
-                lookup_failed = true;
-            }
+    match catalogs.find_book(system, &query).await {
+        Ok(Some(found)) => {
+            return Ok(Json(LibraryLink {
+                library: system.into(),
+                found: true,
+                lookup_failed: false,
+                url: found.url,
+            }));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!("library lookup ({}, {title:?}) failed: {e}", system.id);
+            lookup_failed = true;
         }
     }
 

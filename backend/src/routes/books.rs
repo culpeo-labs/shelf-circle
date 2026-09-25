@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -108,10 +110,8 @@ async fn upsert_resolved_book(pool: &PgPool, input: ResolvedBook) -> ApiResult<B
     .fetch_optional(&mut *tx)
     .await?
     {
-        let book = sqlx::query_as::<_, Book>("select * from books where id = $1")
-            .bind(existing.book_id)
-            .fetch_one(&mut *tx)
-            .await?;
+        let book =
+            fill_description(&mut tx, existing.book_id, input.description.as_deref()).await?;
         tx.commit().await?;
         return Ok(BookWithEdition {
             book,
@@ -136,12 +136,12 @@ async fn upsert_resolved_book(pool: &PgPool, input: ResolvedBook) -> ApiResult<B
     };
 
     let book = match existing_book {
-        Some(b) => b,
+        Some(b) => fill_description(&mut tx, b.id, input.description.as_deref()).await?,
         None => {
             sqlx::query_as::<_, Book>(
                 r#"
-                insert into books (canonical_title, primary_author, open_library_work_id, google_books_volume_id, cover_image_url)
-                values ($1, $2, $3, $4, $5)
+                insert into books (canonical_title, primary_author, open_library_work_id, google_books_volume_id, cover_image_url, description, description_checked_at)
+                values ($1, $2, $3, $4, $5, $6, case when $6 is not null then now() end)
                 returning *
                 "#,
             )
@@ -150,6 +150,7 @@ async fn upsert_resolved_book(pool: &PgPool, input: ResolvedBook) -> ApiResult<B
             .bind(&input.open_library_work_id)
             .bind(&input.google_books_volume_id)
             .bind(&input.cover_image_url)
+            .bind(&input.description)
             .fetch_one(&mut *tx)
             .await?
         }
@@ -179,16 +180,81 @@ async fn upsert_resolved_book(pool: &PgPool, input: ResolvedBook) -> ApiResult<B
     Ok(BookWithEdition { book, edition })
 }
 
+/// Re-resolving a book we already have: keep the row, but take this chance to
+/// fill in a description it doesn't have yet (never overwrites one).
+async fn fill_description(
+    tx: &mut sqlx::PgConnection,
+    book_id: Uuid,
+    description: Option<&str>,
+) -> ApiResult<Book> {
+    Ok(sqlx::query_as::<_, Book>(
+        "update books set \
+             description = coalesce(description, $2), \
+             description_checked_at = case when description is null and $2 is not null \
+                                           then now() else description_checked_at end \
+         where id = $1 returning *",
+    )
+    .bind(book_id)
+    .bind(description)
+    .fetch_one(tx)
+    .await?)
+}
+
+/// How long to wait on a provider while serving a book page, and how long a
+/// "no description found" answer stays valid before we look again.
+const BACKFILL_TIMEOUT: Duration = Duration::from_secs(4);
+const RECHECK_AFTER_DAYS: i64 = 30;
+
 async fn get_book(
     State(pool): State<PgPool>,
+    State(providers): State<Arc<BookProviders>>,
     _caller: CurrentUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<Book>> {
-    let book = sqlx::query_as::<_, Book>("select * from books where id = $1")
+    let mut book = sqlx::query_as::<_, Book>("select * from books where id = $1")
         .bind(id)
         .fetch_optional(&pool)
         .await?
         .ok_or(ApiError::NotFound)?;
+
+    // Books saved before we kept descriptions: look one up once, on first view.
+    // Best-effort — a slow/failed provider must never break the book page, and
+    // a failure isn't recorded, so the next view tries again.
+    let has_source = book.open_library_work_id.is_some() || book.google_books_volume_id.is_some();
+    if book.description.is_none() && has_source {
+        let checked_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "select description_checked_at from books where id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await?;
+        let stale =
+            checked_at.is_none_or(|t| Utc::now() - t > chrono::Duration::days(RECHECK_AFTER_DAYS));
+        if stale {
+            let lookup = tokio::time::timeout(
+                BACKFILL_TIMEOUT,
+                providers.description(
+                    book.open_library_work_id.as_deref(),
+                    book.google_books_volume_id.as_deref(),
+                ),
+            )
+            .await;
+            match lookup {
+                Ok(Ok(found)) => {
+                    sqlx::query(
+                        "update books set description = $2, description_checked_at = now() where id = $1",
+                    )
+                    .bind(id)
+                    .bind(&found)
+                    .execute(&pool)
+                    .await?;
+                    book.description = found;
+                }
+                Ok(Err(e)) => tracing::warn!("description lookup for book {id} failed: {e}"),
+                Err(_) => tracing::warn!("description lookup for book {id} timed out"),
+            }
+        }
+    }
 
     Ok(Json(book))
 }

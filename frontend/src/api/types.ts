@@ -93,6 +93,8 @@ export interface Book {
   open_library_work_id: string | null;
   google_books_volume_id: string | null;
   cover_image_url: string | null;
+  /** Plain-text blurb, only when a source (Open Library / Google Books) has one. */
+  description: string | null;
   created_at: Timestamp;
 }
 

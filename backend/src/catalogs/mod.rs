@@ -13,6 +13,7 @@
 //! callers must treat every lookup as allowed to fail (see the route).
 
 mod biblio_commons;
+mod matching;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -63,10 +64,45 @@ pub fn system(id: &str) -> Option<&'static LibrarySystem> {
     SYSTEMS.iter().find(|s| s.id == id)
 }
 
+/// What we know about a book, for finding it in a catalog. Title + author
+/// identify the *work*; ISBNs (of the editions we have on file) only help pick
+/// the exact edition or catch retitled ones.
+#[derive(Debug, Clone, Copy)]
+pub struct BookQuery<'a> {
+    /// The work's title as we store it.
+    pub title: &'a str,
+    /// Other titles the same work goes by on the editions we have on file
+    /// (translations: the work is filed under its original-language title but
+    /// the saved edition may be "One Hundred Years of Solitude"). Any of
+    /// `title` + these counts as the same work.
+    pub alt_titles: &'a [String],
+    pub author: Option<&'a str>,
+    /// BCP-47-ish tag ("en"); records in this language are preferred, others
+    /// are still accepted when they're all the catalog has.
+    pub language: Option<&'a str>,
+    /// Normalized (see [`normalize_isbn`]), ISBN-13s first.
+    pub isbns: &'a [String],
+}
+
+impl BookQuery<'_> {
+    fn cache_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}",
+            self.title.trim().to_lowercase(),
+            self.alt_titles.join("/").to_lowercase(),
+            self.author.unwrap_or("").trim().to_lowercase(),
+            self.language.unwrap_or(""),
+            self.isbns.join(",")
+        )
+    }
+}
+
 /// Where a catalog says the book lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogMatch {
     pub url: String,
+    /// The catalog record's title (for logs/tests; not shown to users).
+    pub title: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -113,15 +149,14 @@ impl Catalogs {
         }
     }
 
-    /// The catalog's record page for this ISBN, or `None` if it has no such
-    /// edition. Cached per (system, ISBN).
-    pub async fn lookup_isbn(
+    /// The catalog's record page for this book, or `None` if the catalog
+    /// doesn't appear to have it. Cached per (system, book).
+    pub async fn find_book(
         &self,
         system: &'static LibrarySystem,
-        isbn: &str,
+        book: &BookQuery<'_>,
     ) -> Result<Option<CatalogMatch>, CatalogError> {
-        let isbn = normalize_isbn(isbn);
-        let key = (system.id, isbn.clone());
+        let key = (system.id, book.cache_key());
 
         if let Some((at, hit)) = self.cache.lock().unwrap().get(&key) {
             if at.elapsed() < CACHE_TTL {
@@ -131,14 +166,8 @@ impl Catalogs {
 
         let found = match system.kind {
             Kind::BiblioCommons { slug, host } => {
-                biblio_commons::find_by_isbn(
-                    &self.http,
-                    &self.biblio_commons_gateway,
-                    slug,
-                    host,
-                    &isbn,
-                )
-                .await?
+                biblio_commons::find(&self.http, &self.biblio_commons_gateway, slug, host, book)
+                    .await?
             }
         };
 
