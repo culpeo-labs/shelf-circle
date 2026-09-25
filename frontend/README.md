@@ -58,11 +58,14 @@ Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/proje
 `eas.json` has three profiles:
 
 - **development** / **preview** — installable Android APK + iOS _simulator_
-  build (no Apple Developer account needed). `preview` is what CI builds on
-  every push to `main` (`.github/workflows/frontend-build.yml`, via
+  build (no Apple Developer account needed). `preview` is built **on demand**:
+  run `.github/workflows/frontend-build.yml` from the Actions tab (or
+  `gh workflow run frontend-build.yml`), which runs
   `eas build --profile preview --platform all --no-wait` — fire-and-forget;
   check the EAS dashboard for build status, it isn't wired back into the
-  GitHub Actions run).
+  GitHub Actions run. It doesn't run on every merge: EAS's Free plan has a small
+  monthly build quota, and every merge already spends a build on the Play
+  internal-testing release (below).
 - **production** — real Play Store AAB, and (once there's an Apple
   Developer account to sign with) an App Store IPA. Android is automated
   into **Play internal testing**: every push to `main` that touches the app
