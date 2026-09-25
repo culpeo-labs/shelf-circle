@@ -139,6 +139,9 @@ export function useRecommendationsInbox() {
     queryKey: ['recommendations-inbox', user?.id],
     queryFn: () => api.getRecommendationsInbox(user!.id),
     enabled: !!user,
+    // The tab badge lives on this query, so poll (only while the app is
+    // foregrounded) rather than waiting for the user to open the tab.
+    refetchInterval: 60_000,
   });
 }
 
