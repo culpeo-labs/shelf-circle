@@ -157,7 +157,7 @@ impl AvatarStorage {
     /// `avatar_key/` folders and older `user id/` ones have this shape. Keeping
     /// this strict is what stops a delete from ever reaching a file that isn't a
     /// profile photo.
-    fn blob_path(&self, avatar_url: &str) -> Option<String> {
+    pub fn blob_path(&self, avatar_url: &str) -> Option<String> {
         let rest = avatar_url.strip_prefix(&format!("{}/{}/", self.endpoint, self.container))?;
         let (folder, file) = rest.split_once('/')?;
         let name = file.strip_suffix(".jpg")?;
@@ -168,10 +168,16 @@ impl AvatarStorage {
     /// ours, or a file that's already gone (404), is success — there's nothing
     /// to delete. Callers treat failure as non-fatal (see `PATCH /me`).
     pub async fn delete_avatar(&self, avatar_url: &str) -> anyhow::Result<()> {
-        let Some(blob) = self.blob_path(avatar_url) else {
-            return Ok(());
-        };
-        let url = self.sas_url(&blob, "d", Utc::now() + DELETE_TTL);
+        match self.blob_path(avatar_url) {
+            Some(blob) => self.delete_blob(&blob).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Delete one file by its `<key>/<uuid>.jpg` path (as returned by
+    /// [`blob_path`](Self::blob_path)). Already gone (404) is success.
+    pub async fn delete_blob(&self, blob: &str) -> anyhow::Result<()> {
+        let url = self.sas_url(blob, "d", Utc::now() + DELETE_TTL);
         let response = self.http.delete(url).send().await?;
         let status = response.status();
         if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {

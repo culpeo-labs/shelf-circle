@@ -2,6 +2,7 @@ pub mod auth;
 pub mod catalogs;
 pub mod db;
 pub mod error;
+pub mod maintenance;
 pub mod models;
 pub mod providers;
 pub mod routes;
