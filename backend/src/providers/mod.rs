@@ -6,6 +6,7 @@
 
 mod google_books;
 mod open_library;
+mod text;
 
 use serde::Serialize;
 
@@ -100,6 +101,25 @@ impl BookProviders {
 
         results.truncate(limit);
         Ok(results)
+    }
+
+    /// A book's blurb by whichever provider ids we have (Open Library first),
+    /// for backfilling books saved before descriptions were kept. `Ok(None)`
+    /// means the sources answered but have no description.
+    pub async fn description(
+        &self,
+        open_library_work_id: Option<&str>,
+        google_books_volume_id: Option<&str>,
+    ) -> Result<Option<String>, ProviderError> {
+        if let Some(id) = open_library_work_id {
+            if let Some(d) = open_library::description(&self.http, id).await? {
+                return Ok(Some(d));
+            }
+        }
+        if let (Some(id), Some(key)) = (google_books_volume_id, self.google_books_key.as_deref()) {
+            return google_books::description(&self.http, key, id).await;
+        }
+        Ok(None)
     }
 
     /// Fetch one book by provider reference and normalize it into the shape

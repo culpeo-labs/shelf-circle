@@ -3,6 +3,7 @@
 
 use serde::Deserialize;
 
+use super::text::{clean_description, strip_html};
 use super::{normalize_language, BookSearchResult, ProviderError};
 use crate::models::ResolvedBook;
 
@@ -32,6 +33,7 @@ struct VolumeInfo {
     published_date: Option<String>,
     publisher: Option<String>,
     language: Option<String>,
+    description: Option<String>,
     #[serde(rename = "imageLinks", default)]
     image_links: ImageLinks,
     #[serde(rename = "industryIdentifiers", default)]
@@ -179,6 +181,10 @@ async fn resolve_at(
 
     let volume: Volume = resp.json().await?;
     let info = volume.volume_info;
+    let description = info
+        .description
+        .as_deref()
+        .and_then(|d| clean_description(&strip_html(d)));
 
     Ok(ResolvedBook {
         language: info
@@ -197,7 +203,17 @@ async fn resolve_at(
         source_id: volume.id.clone(),
         open_library_work_id: None,
         google_books_volume_id: Some(volume.id),
+        description,
     })
+}
+
+/// Just the volume's blurb (one request), for backfilling older books.
+pub async fn description(
+    http: &reqwest::Client,
+    key: &str,
+    volume_id: &str,
+) -> Result<Option<String>, ProviderError> {
+    Ok(resolve_at(http, BASE, key, volume_id).await?.description)
 }
 
 #[cfg(test)]
@@ -264,6 +280,7 @@ mod tests {
                     "authors": ["Frank Herbert"],
                     "publisher": "Ace Books",
                     "language": "en",
+                    "description": "<p>A desert <b>planet</b> &amp; its spice.</p>",
                     "imageLinks": { "smallThumbnail": "http://books.google.com/small.jpg" },
                     "industryIdentifiers": [
                         { "type": "ISBN_10", "identifier": "0000000001" },
@@ -283,6 +300,11 @@ mod tests {
         assert_eq!(book.primary_author.as_deref(), Some("Frank Herbert"));
         assert_eq!(book.isbn_13.as_deref(), Some("9780000000001"));
         assert_eq!(book.isbn_10.as_deref(), Some("0000000001"));
+        assert_eq!(
+            book.description.as_deref(),
+            Some("A desert planet & its spice."),
+            "HTML stripped"
+        );
         assert_eq!(
             book.cover_image_url.as_deref(),
             Some("https://books.google.com/small.jpg")

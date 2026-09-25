@@ -3,6 +3,7 @@
 
 use serde::Deserialize;
 
+use super::text::clean_description;
 use super::{normalize_language, BookSearchResult, ProviderError};
 use crate::models::ResolvedBook;
 
@@ -120,6 +121,24 @@ struct Work {
     authors: Vec<WorkAuthor>,
     #[serde(default)]
     covers: Vec<i64>,
+    description: Option<Description>,
+}
+
+/// Open Library stores a work's description either as a bare string or as
+/// `{ "type": "/type/text", "value": "..." }`.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Description {
+    Text(String),
+    Typed { value: String },
+}
+
+impl Description {
+    fn into_text(self) -> String {
+        match self {
+            Description::Text(s) | Description::Typed { value: s } => s,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,7 +283,31 @@ async fn resolve_at(
         source_id: work_id.to_string(),
         open_library_work_id: Some(work_id.to_string()),
         google_books_volume_id: None,
+        description: work
+            .description
+            .and_then(|d| clean_description(&d.into_text())),
     })
+}
+
+/// Just the work's blurb (one request), for backfilling books saved before we
+/// kept descriptions.
+pub async fn description(
+    http: &reqwest::Client,
+    work_id: &str,
+) -> Result<Option<String>, ProviderError> {
+    description_at(http, BASE, work_id).await
+}
+
+async fn description_at(
+    http: &reqwest::Client,
+    base: &str,
+    work_id: &str,
+) -> Result<Option<String>, ProviderError> {
+    let work_id = strip_prefix(work_id, "/works/").trim();
+    let work: Option<Work> = get_json(http, &format!("{base}/works/{work_id}.json")).await?;
+    Ok(work
+        .and_then(|w| w.description)
+        .and_then(|d| clean_description(&d.into_text())))
 }
 
 #[cfg(test)]
@@ -416,5 +459,44 @@ mod tests {
             err,
             ProviderError::NotFound { provider: "open_library", source_id } if source_id == "OL404W"
         ));
+    }
+
+    #[tokio::test]
+    async fn descriptions_come_as_a_string_or_a_typed_object_and_get_cleaned() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL1W.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "title": "Dune",
+                "description": { "type": "/type/text", "value": "*Dune* is a novel.\r\n\r\n----------\r\n[1]: http://x" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL2W.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "title": "Plain", "description": "Just text."
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/works/OL3W.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "title": "None" })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let d = |id: &'static str| {
+            let (http, base) = (http.clone(), server.uri());
+            async move { description_at(&http, &base, id).await.unwrap() }
+        };
+        assert_eq!(d("OL1W").await.as_deref(), Some("Dune is a novel."));
+        assert_eq!(d("/works/OL2W").await.as_deref(), Some("Just text."));
+        assert_eq!(d("OL3W").await, None, "work without a description");
+        assert_eq!(
+            d("OL404W").await,
+            None,
+            "unknown work is just 'no description'"
+        );
     }
 }
