@@ -203,9 +203,9 @@ but has no routes yet.
 - **Adding a library** on an existing kind = one `SYSTEMS` entry (id is stored
   on users — never rename). **New kind of catalog** (Libby/OverDrive, Sierra…)
   = a module in `catalogs/`, a `Kind` variant, and an arm in
-  `Catalogs::lookup_isbn` / `search_url`; each kind only answers "record URL
-  for this ISBN".
-- BiblioCommons plugin: `GET {gateway}/v2/libraries/{slug}/bibs/search?query=<isbn>
+  `Catalogs::find_book` / `search_url`; each kind only answers "record URL
+  for this book" (reusing `matching.rs` for the same-work test).
+- BiblioCommons plugin: `GET {gateway}/v2/libraries/{slug}/bibs/search?query=<title author or isbn>
   &searchType=smart` (unauthenticated, **unofficial** — the endpoint the
   libraries' own sites use; verified live for `seattle` and `kcls`), record link
   `https://{host}/v2/record/{bib id}`. Note `slug` is the library's BiblioCommons
