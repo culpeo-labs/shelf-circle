@@ -151,8 +151,14 @@ fn sort_key(bib: &Bib) -> (u8, String) {
 }
 
 /// Records that are the same work as `book` (any known title, and the author
-/// when we have one). Among those, ranked: the exact edition (one of our
-/// ISBNs), then the book's own language, then format, then id (stable).
+/// when we have one). Among those, ranked:
+/// 1. the record titled like the book *as the app shows it* (`book.title`) —
+///    for a translated work that's the original-language title, and it's what
+///    the user saw and picked; the saved edition's language is arbitrary (we
+///    just take Open Library's first English one), so it must not outrank this;
+/// 2. the exact edition (one of our ISBNs);
+/// 3. the book's own language;
+/// 4. format, then id (stable).
 fn best_work_match(bibs: Vec<Bib>, book: &BookQuery<'_>, titles: &[&str]) -> Option<Bib> {
     bibs.into_iter()
         .filter(|b| {
@@ -165,10 +171,11 @@ fn best_work_match(bibs: Vec<Bib>, book: &BookQuery<'_>, titles: &[&str]) -> Opt
             None => true,
         })
         .min_by_key(|b| {
+            let shown_title = matching::titles_match(book.title, &b.brief_info.title);
             let exact_edition = book.isbns.iter().any(|i| b.has_isbn(i));
             let language =
                 matching::same_language(book.language, b.brief_info.primary_language.as_deref());
-            (!exact_edition, !language, sort_key(b))
+            (!shown_title, !exact_edition, !language, sort_key(b))
         })
 }
 
@@ -319,9 +326,9 @@ mod tests {
     }
 
     #[test]
-    fn translated_works_match_under_any_known_title_preferring_our_language() {
-        // The work is filed under its Spanish title, but the edition we saved
-        // is the English translation.
+    fn translated_works_prefer_the_title_the_app_shows() {
+        // The work is filed (and displayed) under its Spanish title, but the
+        // edition we happened to save is the English translation.
         let none: [String; 0] = [];
         let alts = ["One Hundred Years of Solitude".to_string()];
         let q = BookQuery {
@@ -353,13 +360,13 @@ mod tests {
         };
         assert_eq!(
             pick(bibs(), &q).as_deref(),
-            Some("EN"),
-            "our language beats a better format"
+            Some("SP"),
+            "the title shown to the user wins"
         );
-        // If the library only has the Spanish edition, that still beats nothing.
+        // A library with only the English translation still gets a link.
         assert_eq!(
-            pick(bibs().into_iter().take(1).collect(), &q).as_deref(),
-            Some("SP")
+            pick(bibs().into_iter().skip(1).collect(), &q).as_deref(),
+            Some("EN")
         );
     }
 }

@@ -1216,8 +1216,9 @@ async fn library_link_matches_the_work_with_search_fallback() {
         "https://seattle.bibliocommons.com/v2/search?query=Unfindable%20Tome%20Andy%20Weir&searchType=smart"
     );
 
-    // Translated work: filed under its Spanish title, saved edition is the
-    // English translation. Search under both titles and prefer our language.
+    // Translated work: filed (and displayed) under its Spanish title, saved
+    // edition is the English translation. Search under both titles and prefer
+    // the record titled like the book the user sees.
     let mut translated = normalized_book("OL5W", "OL5W", "One Hundred Years of Solitude");
     translated["canonical_title"] = json!("Cien años de soledad");
     translated["primary_author"] = json!("Gabriel García Márquez");
@@ -1255,8 +1256,8 @@ async fn library_link_matches_the_work_with_search_fallback() {
     .await;
     assert_eq!(link["found"], true, "body: {link}");
     assert_eq!(
-        link["url"], "https://seattle.bibliocommons.com/v2/record/S30EN",
-        "English edition preferred for an English-language book"
+        link["url"], "https://seattle.bibliocommons.com/v2/record/S30SP",
+        "the Spanish record matches the title shown in the app"
     );
 
     // Catalog down → still 200 with a usable link, flagged as a failed lookup.

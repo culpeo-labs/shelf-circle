@@ -198,9 +198,15 @@ but has no routes yet.
   (`catalogs/matching.rs`: normalized title — subtitle-tolerant but two main
   titles never fuzzy-match each other, so "Dune" ≠ "Dune Messiah" — plus author
   surname and compatible language), preferring the exact edition (one of our
-  ISBNs), then a record in the book's language (a preference, not a filter —
-  a Spanish-only holding still beats nothing), then plain book > large print >
-  ebook > other. Only if nothing matches are up to 2 ISBNs tried on their own.
+  ISBNs), then a record in the book's language (a preference, not a filter),
+  then plain book > large print > ebook > other. Ranking, in order: record
+  titled like the book **as the app shows it** (`books.canonical_title`) →
+  exact edition (our ISBN) → the saved edition's language → format. Title-first
+  because the saved edition's language is arbitrary (Open Library's first
+  English one) while the displayed title is what the user actually picked; an
+  English-first rule linked the English translation of "Cien años de soledad"
+  even though Seattle holds the Spanish edition the user was looking at. Only
+  if nothing matches are up to 2 ISBNs tried on their own.
 - **Translations:** Open Library files every translation under one work, so a
   book can be titled "Cien años de soledad" while its saved edition is the
   English "One Hundred Years of Solitude" (and the catalog lists each under its
