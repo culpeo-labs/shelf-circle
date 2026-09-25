@@ -56,6 +56,8 @@ pub struct Book {
     pub open_library_work_id: Option<String>,
     pub google_books_volume_id: Option<String>,
     pub cover_image_url: Option<String>,
+    /// Plain-text blurb from Open Library / Google Books, when a source has one.
+    pub description: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -90,6 +92,9 @@ pub struct ResolvedBook {
     pub source_id: String,
     pub open_library_work_id: Option<String>,
     pub google_books_volume_id: Option<String>,
+    /// Optional so manual entries and older clients needn't send it.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, sqlx::Type, Serialize, Deserialize, PartialEq, Eq)]
