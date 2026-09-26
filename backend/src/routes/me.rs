@@ -35,10 +35,6 @@ async fn get_me(
 }
 
 const MAX_DISPLAY_NAME_CHARS: usize = 50;
-/// Photo uploads one user may start per rolling 24 hours. Far beyond what a person
-/// does (picking a photo a handful of times), so it only ever bites a script that
-/// is minting upload URLs to fill our storage.
-const MAX_AVATAR_UPLOADS_PER_DAY: i32 = 100;
 const AVATAR_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Edit the caller's own profile. Only fields present in the body change.
@@ -188,35 +184,6 @@ async fn avatar_upload(
 ) -> ApiResult<Json<AvatarUploadTicket>> {
     let storage =
         storage.ok_or_else(|| ApiError::Unavailable("avatar uploads aren't configured".into()))?;
-
-    // Count this against today's allowance in one atomic statement: starts a fresh
-    // 24h window if the old one has lapsed, otherwise bumps the count, and matches
-    // no row (so nothing changes) once the limit is reached.
-    let allowed = sqlx::query(
-        "update users set \
-             avatar_upload_count = case \
-                 when avatar_upload_window_start is null \
-                      or avatar_upload_window_start < now() - interval '24 hours' \
-                 then 1 else avatar_upload_count + 1 end, \
-             avatar_upload_window_start = case \
-                 when avatar_upload_window_start is null \
-                      or avatar_upload_window_start < now() - interval '24 hours' \
-                 then now() else avatar_upload_window_start end \
-         where id = $1 \
-           and (avatar_upload_window_start is null \
-                or avatar_upload_window_start < now() - interval '24 hours' \
-                or avatar_upload_count < $2)",
-    )
-    .bind(me.id)
-    .bind(MAX_AVATAR_UPLOADS_PER_DAY)
-    .execute(&pool)
-    .await?;
-    if allowed.rows_affected() == 0 {
-        return Err(ApiError::TooManyRequests(
-            "you've started too many photo uploads today — try again tomorrow".into(),
-        ));
-    }
-
     let up = storage.create_upload(avatar_key(&pool, me.id).await?);
     // Recorded so that if it's never saved to the profile it can expire.
     if let Some(blob) = storage.blob_path(&up.avatar_url) {

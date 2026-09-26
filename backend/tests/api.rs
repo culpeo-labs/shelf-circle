@@ -2215,61 +2215,6 @@ async fn unsaved_photos_expire_and_saved_ones_do_not() {
     assert_eq!(rows().await.len(), 2);
 }
 
-/// Abuse guard: 100 photo uploads per user per rolling day. The 101st is a 429,
-/// it only affects that user, and the allowance comes back once the window lapses.
-#[tokio::test]
-async fn photo_uploads_are_rate_limited_per_user_per_day() {
-    let app = TestApp::new().await;
-    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
-    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
-
-    let mint = |token: &str| json_request("POST", "/me/avatar-upload", Some(token), json!({}));
-
-    for n in 1..=100 {
-        let (status, body) = send(&app.router, mint(&token_a)).await;
-        assert_eq!(status, StatusCode::OK, "upload {n}: {body}");
-    }
-    let (status, body) = send(&app.router, mint(&token_a)).await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {body}");
-    assert!(
-        body["error"].as_str().unwrap().contains("tomorrow"),
-        "{body}"
-    );
-    let recorded = sqlx::query_scalar::<_, i64>("select count(*) from avatar_uploads")
-        .fetch_one(&app.db.pool)
-        .await
-        .unwrap();
-    assert_eq!(recorded, 100, "a refused request records nothing");
-
-    // Someone else is unaffected.
-    let (status, _) = send(&app.router, mint(&token_b)).await;
-    assert_eq!(status, StatusCode::OK);
-
-    // Still blocked partway through the window; allowed again once it lapses.
-    sqlx::query(
-        "update users set avatar_upload_window_start = now() - interval '23 hours' where id = $1::uuid",
-    )
-    .bind(&id_a)
-    .execute(&app.db.pool)
-    .await
-    .unwrap();
-    let (status, _) = send(&app.router, mint(&token_a)).await;
-    assert_eq!(
-        status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "23h in: still limited"
-    );
-    sqlx::query(
-        "update users set avatar_upload_window_start = now() - interval '25 hours' where id = $1::uuid",
-    )
-    .bind(&id_a)
-    .execute(&app.db.pool)
-    .await
-    .unwrap();
-    let (status, _) = send(&app.router, mint(&token_a)).await;
-    assert_eq!(status, StatusCode::OK, "a new window starts");
-}
-
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

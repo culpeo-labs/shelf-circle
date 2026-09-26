@@ -20,8 +20,6 @@ pub enum ApiError {
     Conflict(String),
     #[error("unavailable: {0}")]
     Unavailable(String),
-    #[error("too many requests: {0}")]
-    TooManyRequests(String),
     #[error(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
@@ -39,7 +37,6 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
-            ApiError::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m.clone()),
             ApiError::Auth(e) => match e {
                 AuthError::JwksUnavailable | AuthError::NotConfigured => {
                     tracing::error!("auth backend error: {e:?}");
@@ -140,10 +137,6 @@ mod tests {
         assert_eq!(
             status_of(ApiError::Conflict("x".into())),
             StatusCode::CONFLICT
-        );
-        assert_eq!(
-            status_of(ApiError::TooManyRequests("x".into())),
-            StatusCode::TOO_MANY_REQUESTS
         );
     }
 
