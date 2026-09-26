@@ -2130,20 +2130,20 @@ async fn unsaved_photos_expire_and_saved_ones_do_not() {
     };
     let ttl = Duration::from_secs(60 * 60);
 
-    // Two uploads; only the first is saved to the profile.
+    // One upload is saved to the profile; a later one is left unsaved.
     let saved = mint().await;
-    let abandoned = mint().await;
     assert_eq!(
         rows().await,
-        [(path_of(&saved), false), (path_of(&abandoned), false)],
-        "each upload is recorded, unclaimed"
+        [(path_of(&saved), false)],
+        "recorded, unclaimed"
     );
     let (status, _) = send(&app.router, patch(json!({ "avatar_url": saved }))).await;
     assert_eq!(status, StatusCode::OK);
+    let abandoned = mint().await;
     assert_eq!(
         rows().await,
         [(path_of(&saved), true), (path_of(&abandoned), false)],
-        "saving claims it"
+        "saving claims it; the current photo isn't touched by a new upload"
     );
 
     // Nothing is old enough yet.
@@ -2213,6 +2213,113 @@ async fn unsaved_photos_expire_and_saved_ones_do_not() {
         "storage still failing: kept for next time"
     );
     assert_eq!(rows().await.len(), 2);
+}
+
+/// A user has at most one pending (unsaved) photo: starting a new upload discards
+/// the previous pending one — but never their saved photo — and a failed discard
+/// never blocks the new upload.
+#[tokio::test]
+async fn only_one_photo_upload_is_pending_per_user() {
+    let app = TestApp::new().await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let mint = |token: String| {
+        let router = app.router.clone();
+        async move {
+            let (status, ticket) = send(
+                &router,
+                json_request("POST", "/me/avatar-upload", Some(&token), json!({})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{ticket}");
+            ticket["avatar_url"].as_str().unwrap().to_string()
+        }
+    };
+    let path_of = |url: &str| {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .path()
+            .trim_start_matches("/avatars/")
+            .to_string()
+    };
+    let pending = || async {
+        sqlx::query_scalar::<_, String>(
+            "select blob_path from avatar_uploads where claimed_at is null order by created_at",
+        )
+        .fetch_all(&app.db.pool)
+        .await
+        .unwrap()
+    };
+    let deletes = || async {
+        app.storage_server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| r.url.path().trim_start_matches("/avatars/").to_string())
+            .collect::<Vec<_>>()
+    };
+
+    // Each new upload replaces the last unsaved one (its file is deleted too).
+    let first = mint(token_a.clone()).await;
+    assert_eq!(pending().await, [path_of(&first)]);
+    let second = mint(token_a.clone()).await;
+    assert_eq!(
+        pending().await,
+        [path_of(&second)],
+        "the first was discarded"
+    );
+    assert_eq!(deletes().await, [path_of(&first)]);
+    let third = mint(token_a.clone()).await;
+    assert_eq!(pending().await, [path_of(&third)]);
+    assert_eq!(deletes().await, [path_of(&first), path_of(&second)]);
+
+    // Another user's pending upload is left alone.
+    let bobs = mint(token_b.clone()).await;
+    assert_eq!(pending().await.len(), 2);
+    let fourth = mint(token_a.clone()).await;
+    let mut want = vec![path_of(&bobs), path_of(&fourth)];
+    want.sort();
+    let mut got = pending().await;
+    got.sort();
+    assert_eq!(got, want, "Alice's earlier one went, Bob's stayed");
+
+    // The saved photo is never discarded by a new upload.
+    send(
+        &app.router,
+        json_request(
+            "PATCH",
+            "/me",
+            Some(&token_a),
+            json!({ "avatar_url": fourth }),
+        ),
+    )
+    .await;
+    let deletes_before = deletes().await.len();
+    let fifth = mint(token_a.clone()).await;
+    assert_eq!(
+        deletes().await.len(),
+        deletes_before,
+        "saved photo untouched"
+    );
+    assert!(pending().await.contains(&path_of(&fifth)));
+
+    // If discarding the old one fails, minting still works and the old one is
+    // kept (unclaimed) for the sweep to retry.
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&app.storage_server)
+        .await;
+    let sixth = mint(token_a.clone()).await;
+    let left = pending().await;
+    assert!(
+        left.contains(&path_of(&fifth)),
+        "undeleted, awaiting the sweep"
+    );
+    assert!(left.contains(&path_of(&sixth)));
 }
 
 /// The self-accept rejection happens *after* the token is atomically claimed

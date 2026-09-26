@@ -61,7 +61,13 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   row is deleted with its file; if that delete fails the row is handed back to the
   sweep (unclaimed) to retry. The table therefore holds pending uploads + each
   user's current photo — the inventory account deletion (not built) should use to
-  remove a user's photos. Photos saved before `0015` have no row (legacy: they're
+  remove a user's photos. **One pending upload per user:** `POST /me/avatar-upload` first
+  discards that user's previous unsaved upload (file, then record; best-effort, a
+  failed delete stays unclaimed for the sweep), so an account can leave at most one
+  pending photo plus its current one in storage — that, not a rate limit, is the abuse
+  bound (`maintenance::discard_pending_avatar_uploads`). A saved (claimed) photo is
+  never discarded by a new upload. The sweep is bounded at 100 rows per pass
+  (`SWEEP_BATCH`). Photos saved before `0015` have no row (legacy: they're
   still deleted on replace via their URL, just not tracked). Verified end to end:
   the real binary + Azurite (upload → 200, restart with the record aged → 404).
 - `src/db.rs` — pool creation + migration runner.

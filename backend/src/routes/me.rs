@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::auth::{AuthClaims, CurrentUser};
 use crate::error::{ApiError, ApiResult};
+use crate::maintenance::discard_pending_avatar_uploads;
 use crate::models::{AvatarUploadTicket, UpdateMe, User};
 use crate::state::AppState;
 use crate::storage::AvatarStorage;
@@ -184,6 +185,12 @@ async fn avatar_upload(
 ) -> ApiResult<Json<AvatarUploadTicket>> {
     let storage =
         storage.ok_or_else(|| ApiError::Unavailable("avatar uploads aren't configured".into()))?;
+    // One pending upload per user: starting a new one discards the last unsaved
+    // photo. Best-effort — failing to tidy up must not stop the user uploading.
+    if let Err(e) = discard_pending_avatar_uploads(&pool, &storage, me.id).await {
+        tracing::warn!("couldn't discard previous pending photo: {e}");
+    }
+
     let up = storage.create_upload(avatar_key(&pool, me.id).await?);
     // Recorded so that if it's never saved to the profile it can expire.
     if let Some(blob) = storage.blob_path(&up.avatar_url) {

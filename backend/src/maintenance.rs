@@ -56,6 +56,45 @@ pub async fn sweep_unclaimed_avatars(
     Ok(removed.len())
 }
 
+/// A user gets at most **one** pending (uploaded but unsaved) photo: starting a new
+/// upload discards their previous pending one — file, then record. That bounds
+/// what one account can leave in storage to one pending photo plus its current
+/// one, so no rate limit is needed; anything left over (a delete that failed, or
+/// the last abandoned upload) is caught by the expiry sweep.
+///
+/// A file that can't be deleted keeps its record (unclaimed) for the sweep to
+/// retry, so the worst case is briefly two pending photos, never a lost one.
+pub async fn discard_pending_avatar_uploads(
+    pool: &PgPool,
+    storage: &AvatarStorage,
+    user_id: Uuid,
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let pending = sqlx::query_as::<_, (Uuid, String)>(
+        "select id, blob_path from avatar_uploads \
+         where user_id = $1 and claimed_at is null for update",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let mut removed = Vec::new();
+    for (id, blob_path) in pending {
+        match storage.delete_blob(&blob_path).await {
+            Ok(()) => removed.push(id),
+            Err(e) => tracing::warn!("couldn't discard pending photo {blob_path}: {e}"),
+        }
+    }
+    if !removed.is_empty() {
+        sqlx::query("delete from avatar_uploads where id = any($1)")
+            .bind(&removed)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Run [`sweep_unclaimed_avatars`] every few minutes for the life of the process
 /// (the first pass is immediate, which also cleans up after a restart).
 pub fn spawn_avatar_sweeper(pool: PgPool, storage: Arc<AvatarStorage>) {
