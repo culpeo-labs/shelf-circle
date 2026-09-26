@@ -5,7 +5,8 @@ use tokio::net::TcpListener;
 
 use shelf_circle_backend::auth::HankoAuth;
 use shelf_circle_backend::catalogs::Catalogs;
-use shelf_circle_backend::maintenance::spawn_avatar_sweeper;
+use shelf_circle_backend::hanko_admin::HankoAdmin;
+use shelf_circle_backend::maintenance::spawn_maintenance;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
 use shelf_circle_backend::storage::AvatarStorage;
@@ -40,11 +41,15 @@ async fn main() -> anyhow::Result<()> {
         auth,
         storage: AvatarStorage::from_env()?.map(Arc::new),
         catalogs: Arc::new(Catalogs::from_env()),
+        hanko_admin: HankoAdmin::from_env()?.map(Arc::new),
     };
-
-    if let Some(storage) = &state.storage {
-        spawn_avatar_sweeper(state.pool.clone(), storage.clone());
+    if state.hanko_admin.is_none() && !state.auth.disabled {
+        tracing::warn!(
+            "HANKO_API_KEY isn't set: account deletion is disabled (DELETE /me answers 503)"
+        );
     }
+
+    spawn_maintenance(state.pool.clone(), state.storage.clone());
 
     let app = app(state);
 

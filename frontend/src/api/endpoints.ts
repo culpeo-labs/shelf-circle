@@ -39,6 +39,9 @@ export const updateMe = (input: UpdateMeInput) =>
 export const createAvatarUpload = () =>
   apiFetch<AvatarUploadTicket>('/me/avatar-upload', { method: 'POST' });
 
+/** Permanently deletes the caller's account and all their data (and their sign-in). */
+export const deleteAccount = () => apiFetch<void>('/me', { method: 'DELETE' });
+
 export const createUser = (input: CreateUserInput) =>
   apiFetch<User>('/users', { method: 'POST', body: input });
 

@@ -1,3 +1,4 @@
+mod account;
 mod books;
 mod feed;
 mod friendships;

@@ -13,7 +13,12 @@ use crate::storage::AvatarStorage;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/me", get(get_me).patch(update_me))
+        .route(
+            "/me",
+            get(get_me)
+                .patch(update_me)
+                .delete(super::account::delete_account),
+        )
         .route("/me/avatar-upload", post(avatar_upload))
 }
 
