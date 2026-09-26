@@ -61,7 +61,11 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   row is deleted with its file; if that delete fails the row is handed back to the
   sweep (unclaimed) to retry. The table therefore holds pending uploads + each
   user's current photo — the inventory account deletion (not built) should use to
-  remove a user's photos. Photos saved before `0015` have no row (legacy: they're
+  remove a user's photos. **Abuse cap:** `POST /me/avatar-upload` allows 100 uploads per
+  user per rolling 24 h (`MAX_AVATAR_UPLOADS_PER_DAY`, a counter on `users` — not derived
+  from `avatar_uploads`, whose rows are deleted on replace/sweep); the 101st is a 429
+  (`ApiError::TooManyRequests`) that records nothing and affects only that user. The
+  sweep itself is bounded at 100 rows per pass (`SWEEP_BATCH`). Photos saved before `0015` have no row (legacy: they're
   still deleted on replace via their URL, just not tracked). Verified end to end:
   the real binary + Azurite (upload → 200, restart with the record aged → 404).
 - `src/db.rs` — pool creation + migration runner.
@@ -98,7 +102,7 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   **Book descriptions**), `0012_book_completions_and_goals.sql` (`book_completions` +
   `reading_goals`; see **Reading completions & goals**), `0013_invite_modes_and_friend_requests.sql`
   (see **Friends & invites**), `0014_avatar_key.sql` (`users.avatar_key`), `0015_avatar_uploads.sql` (pending photo uploads; see
-  `storage.rs` above). UUID default is
+  `storage.rs` above), `0016_avatar_upload_rate_limit.sql` (per-user upload counter). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
