@@ -50,11 +50,26 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   done). `blob_path` only maps URLs of the exact shape `<uuid>/<uuid>.jpg` under our
   container, so a delete can't reach anything that isn't a profile photo (older
   `<user id>/…` files match too, so they're removed when replaced). Verified against
-  Azurite (upload 201 → delete → 404). **Not covered:** a photo that was uploaded but
-  never saved (the user backed out) stays as an orphan — the URL isn't stored anywhere;
-  a storage lifecycle rule (e.g. delete `avatars/` blobs never referenced) or a sweep
-  job would be the fix. Account deletion (not built) should also delete the user's
-  whole `avatar_key/` folder.
+  Azurite (upload 201 → delete → 404). **Unsaved photos expire** (`avatar_uploads`, migration `0015`): every
+  `POST /me/avatar-upload` records the file; saving it (`PATCH /me`) marks it
+  claimed. `maintenance::sweep_unclaimed_avatars` (run at startup and every 15 min
+  by `spawn_avatar_sweeper`) deletes unclaimed uploads older than
+  `UNSAVED_PHOTO_TTL` (1 h) — file, then row; `for update skip locked` makes
+  concurrent replicas safe, and a file that won't delete keeps its row for the next
+  sweep. `PATCH /me` requires a live record for the URL (else 400 "that photo
+  upload has expired — please choose the photo again"). A replaced/removed photo's
+  row is deleted with its file; if that delete fails the row is handed back to the
+  sweep (unclaimed) to retry. The table therefore holds pending uploads + each
+  user's current photo — the inventory account deletion (not built) should use to
+  remove a user's photos. **One pending upload per user:** `POST /me/avatar-upload` first
+  discards that user's previous unsaved upload (file, then record; best-effort, a
+  failed delete stays unclaimed for the sweep), so an account can leave at most one
+  pending photo plus its current one in storage — that, not a rate limit, is the abuse
+  bound (`maintenance::discard_pending_avatar_uploads`). A saved (claimed) photo is
+  never discarded by a new upload. The sweep is bounded at 100 rows per pass
+  (`SWEEP_BATCH`). Photos saved before `0015` have no row (legacy: they're
+  still deleted on replace via their URL, just not tracked). Verified end to end:
+  the real binary + Azurite (upload → 200, restart with the record aged → 404).
 - `src/db.rs` — pool creation + migration runner.
 - `src/error.rs` — `ApiError` / `ApiResult`; maps errors to JSON responses
   (`ProviderError` → 404 / 400 / 502).
@@ -88,7 +103,8 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   `0011_book_description.sql` (`books.description` + `description_checked_at`; see
   **Book descriptions**), `0012_book_completions_and_goals.sql` (`book_completions` +
   `reading_goals`; see **Reading completions & goals**), `0013_invite_modes_and_friend_requests.sql`
-  (see **Friends & invites**), `0014_avatar_key.sql` (`users.avatar_key`). UUID default is
+  (see **Friends & invites**), `0014_avatar_key.sql` (`users.avatar_key`), `0015_avatar_uploads.sql` (pending photo uploads; see
+  `storage.rs` above). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so

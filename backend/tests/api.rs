@@ -2062,6 +2062,266 @@ async fn replacing_or_removing_a_photo_deletes_the_old_file() {
     assert!(me["avatar_url"].is_null(), "the profile still updated");
 }
 
+/// A photo that's uploaded but never saved expires: after the TTL the sweep
+/// deletes the file and its record, and saving that photo afterwards is refused.
+/// Saving a photo claims it (so it never expires), replacing it deletes the old
+/// file and record, and a failed delete is retried by the next sweep.
+#[tokio::test]
+async fn unsaved_photos_expire_and_saved_ones_do_not() {
+    use shelf_circle_backend::maintenance::sweep_unclaimed_avatars;
+    use shelf_circle_backend::storage::AvatarStorage;
+    use std::time::Duration;
+
+    let app = TestApp::new().await;
+    let (token, _id) = onboard(&app, "hanko|a", "alice").await;
+    let storage = AvatarStorage::new(
+        "testacct",
+        "dGVzdC1rZXk=",
+        "avatars",
+        Some(app.storage_server.uri()),
+    )
+    .unwrap();
+
+    let patch = |body: Value| json_request("PATCH", "/me", Some(&token), body);
+    let mint = || async {
+        let (_, ticket) = send(
+            &app.router,
+            json_request("POST", "/me/avatar-upload", Some(&token), json!({})),
+        )
+        .await;
+        ticket["avatar_url"].as_str().unwrap().to_string()
+    };
+    let path_of = |url: &str| {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .path()
+            .trim_start_matches("/avatars/")
+            .to_string()
+    };
+    let rows = || async {
+        sqlx::query_as::<_, (String, bool)>(
+            "select blob_path, claimed_at is not null from avatar_uploads order by created_at",
+        )
+        .fetch_all(&app.db.pool)
+        .await
+        .unwrap()
+    };
+    let deletes = || async {
+        app.storage_server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| r.url.path().trim_start_matches("/avatars/").to_string())
+            .collect::<Vec<_>>()
+    };
+    let age = |blob: String| {
+        let pool = app.db.pool.clone();
+        async move {
+            sqlx::query(
+                "update avatar_uploads set created_at = now() - interval '2 hours' where blob_path = $1",
+            )
+            .bind(blob)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let ttl = Duration::from_secs(60 * 60);
+
+    // One upload is saved to the profile; a later one is left unsaved.
+    let saved = mint().await;
+    assert_eq!(
+        rows().await,
+        [(path_of(&saved), false)],
+        "recorded, unclaimed"
+    );
+    let (status, _) = send(&app.router, patch(json!({ "avatar_url": saved }))).await;
+    assert_eq!(status, StatusCode::OK);
+    let abandoned = mint().await;
+    assert_eq!(
+        rows().await,
+        [(path_of(&saved), true), (path_of(&abandoned), false)],
+        "saving claims it; the current photo isn't touched by a new upload"
+    );
+
+    // Nothing is old enough yet.
+    assert_eq!(
+        sweep_unclaimed_avatars(&app.db.pool, &storage, ttl)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(deletes().await.is_empty());
+
+    // Time passes: the abandoned one expires; the saved (claimed) one is untouched
+    // however old it gets.
+    age(path_of(&saved)).await;
+    age(path_of(&abandoned)).await;
+    assert_eq!(
+        sweep_unclaimed_avatars(&app.db.pool, &storage, ttl)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(deletes().await, [path_of(&abandoned)]);
+    assert_eq!(rows().await, [(path_of(&saved), true)]);
+
+    // Saving the expired photo now is refused, with a message the app can show.
+    let (status, body) = send(&app.router, patch(json!({ "avatar_url": abandoned }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap().contains("expired"),
+        "{body}"
+    );
+
+    // Replacing the saved photo deletes its file and forgets its record.
+    let replacement = mint().await;
+    send(&app.router, patch(json!({ "avatar_url": replacement }))).await;
+    assert_eq!(deletes().await, [path_of(&abandoned), path_of(&saved)]);
+    assert_eq!(rows().await, [(path_of(&replacement), true)]);
+
+    // Removing the photo deletes it too, leaving no records.
+    let (_, me) = send(&app.router, patch(json!({ "avatar_url": null }))).await;
+    assert!(me["avatar_url"].is_null());
+    assert!(rows().await.is_empty());
+
+    // If deleting a replaced photo fails, it's handed back to the sweep and
+    // retried — not forgotten.
+    let first = mint().await;
+    send(&app.router, patch(json!({ "avatar_url": first }))).await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&app.storage_server)
+        .await;
+    let second = mint().await;
+    let (status, _) = send(&app.router, patch(json!({ "avatar_url": second }))).await;
+    assert_eq!(status, StatusCode::OK, "the profile still updates");
+    assert_eq!(
+        rows().await,
+        [(path_of(&first), false), (path_of(&second), true)],
+        "the undeleted old photo is unclaimed, so the sweep will retry it"
+    );
+    age(path_of(&first)).await;
+    assert_eq!(
+        sweep_unclaimed_avatars(&app.db.pool, &storage, ttl)
+            .await
+            .unwrap(),
+        0,
+        "storage still failing: kept for next time"
+    );
+    assert_eq!(rows().await.len(), 2);
+}
+
+/// A user has at most one pending (unsaved) photo: starting a new upload discards
+/// the previous pending one — but never their saved photo — and a failed discard
+/// never blocks the new upload.
+#[tokio::test]
+async fn only_one_photo_upload_is_pending_per_user() {
+    let app = TestApp::new().await;
+    let (token_a, _id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+
+    let mint = |token: String| {
+        let router = app.router.clone();
+        async move {
+            let (status, ticket) = send(
+                &router,
+                json_request("POST", "/me/avatar-upload", Some(&token), json!({})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{ticket}");
+            ticket["avatar_url"].as_str().unwrap().to_string()
+        }
+    };
+    let path_of = |url: &str| {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .path()
+            .trim_start_matches("/avatars/")
+            .to_string()
+    };
+    let pending = || async {
+        sqlx::query_scalar::<_, String>(
+            "select blob_path from avatar_uploads where claimed_at is null order by created_at",
+        )
+        .fetch_all(&app.db.pool)
+        .await
+        .unwrap()
+    };
+    let deletes = || async {
+        app.storage_server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| r.url.path().trim_start_matches("/avatars/").to_string())
+            .collect::<Vec<_>>()
+    };
+
+    // Each new upload replaces the last unsaved one (its file is deleted too).
+    let first = mint(token_a.clone()).await;
+    assert_eq!(pending().await, [path_of(&first)]);
+    let second = mint(token_a.clone()).await;
+    assert_eq!(
+        pending().await,
+        [path_of(&second)],
+        "the first was discarded"
+    );
+    assert_eq!(deletes().await, [path_of(&first)]);
+    let third = mint(token_a.clone()).await;
+    assert_eq!(pending().await, [path_of(&third)]);
+    assert_eq!(deletes().await, [path_of(&first), path_of(&second)]);
+
+    // Another user's pending upload is left alone.
+    let bobs = mint(token_b.clone()).await;
+    assert_eq!(pending().await.len(), 2);
+    let fourth = mint(token_a.clone()).await;
+    let mut want = vec![path_of(&bobs), path_of(&fourth)];
+    want.sort();
+    let mut got = pending().await;
+    got.sort();
+    assert_eq!(got, want, "Alice's earlier one went, Bob's stayed");
+
+    // The saved photo is never discarded by a new upload.
+    send(
+        &app.router,
+        json_request(
+            "PATCH",
+            "/me",
+            Some(&token_a),
+            json!({ "avatar_url": fourth }),
+        ),
+    )
+    .await;
+    let deletes_before = deletes().await.len();
+    let fifth = mint(token_a.clone()).await;
+    assert_eq!(
+        deletes().await.len(),
+        deletes_before,
+        "saved photo untouched"
+    );
+    assert!(pending().await.contains(&path_of(&fifth)));
+
+    // If discarding the old one fails, minting still works and the old one is
+    // kept (unclaimed) for the sweep to retry.
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&app.storage_server)
+        .await;
+    let sixth = mint(token_a.clone()).await;
+    let left = pending().await;
+    assert!(
+        left.contains(&path_of(&fifth)),
+        "undeleted, awaiting the sweep"
+    );
+    assert!(left.contains(&path_of(&sixth)));
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

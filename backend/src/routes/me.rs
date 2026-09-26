@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::auth::{AuthClaims, CurrentUser};
 use crate::error::{ApiError, ApiResult};
+use crate::maintenance::discard_pending_avatar_uploads;
 use crate::models::{AvatarUploadTicket, UpdateMe, User};
 use crate::state::AppState;
 use crate::storage::AvatarStorage;
@@ -65,6 +66,22 @@ async fn update_me(
                 "avatar_url must come from POST /me/avatar-upload".into(),
             ));
         }
+        // ...and one that hasn't expired: an upload that was never saved is
+        // deleted after `UNSAVED_PHOTO_TTL` (see maintenance.rs), so a URL
+        // whose record is gone points at a file that no longer exists.
+        let blob = storage.as_ref().and_then(|s| s.blob_path(url));
+        let live = sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from avatar_uploads where user_id = $1 and blob_path = $2)",
+        )
+        .bind(me.id)
+        .bind(blob)
+        .fetch_one(&pool)
+        .await?;
+        if !live {
+            return Err(ApiError::BadRequest(
+                "that photo upload has expired — please choose the photo again".into(),
+            ));
+        }
     }
     let (set_avatar, avatar_url) = match input.avatar_url {
         Some(url) => (true, url),
@@ -96,15 +113,62 @@ async fn update_me(
     .fetch_one(&pool)
     .await?;
 
-    // Replacing or removing a photo deletes the old file, so a discarded photo
-    // doesn't stay reachable at its old URL. Best-effort: the profile is already
-    // saved, so a storage hiccup is logged rather than failing the request.
-    if let (Some(old), Some(storage)) = (previous_avatar, storage.as_ref()) {
-        if user.avatar_url.as_deref() != Some(old.as_str()) {
-            match tokio::time::timeout(AVATAR_DELETE_TIMEOUT, storage.delete_avatar(&old)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => tracing::warn!("couldn't delete replaced avatar: {e}"),
-                Err(_) => tracing::warn!("deleting replaced avatar timed out"),
+    if let (true, Some(storage)) = (set_avatar, storage.as_ref()) {
+        // The new photo is now in use, so it must no longer expire.
+        if let Some(blob) = user
+            .avatar_url
+            .as_deref()
+            .and_then(|u| storage.blob_path(u))
+        {
+            sqlx::query(
+                "update avatar_uploads set claimed_at = coalesce(claimed_at, now()) \
+                 where user_id = $1 and blob_path = $2",
+            )
+            .bind(me.id)
+            .bind(blob)
+            .execute(&pool)
+            .await?;
+        }
+
+        // Replacing or removing a photo deletes the old file, so a discarded photo
+        // doesn't stay reachable at its old URL. Best-effort: the profile is already
+        // saved, so a storage hiccup is logged rather than failing the request.
+        if let Some(old) = previous_avatar.filter(|o| user.avatar_url.as_deref() != Some(o)) {
+            let deleted = match tokio::time::timeout(
+                AVATAR_DELETE_TIMEOUT,
+                storage.delete_avatar(&old),
+            )
+            .await
+            {
+                Ok(Ok(())) => true,
+                Ok(Err(e)) => {
+                    tracing::warn!("couldn't delete replaced avatar: {e}");
+                    false
+                }
+                Err(_) => {
+                    tracing::warn!("deleting replaced avatar timed out");
+                    false
+                }
+            };
+            if let Some(blob) = storage.blob_path(&old) {
+                if deleted {
+                    // Gone: forget its record.
+                    sqlx::query("delete from avatar_uploads where user_id = $1 and blob_path = $2")
+                        .bind(me.id)
+                        .bind(blob)
+                        .execute(&pool)
+                        .await?;
+                } else {
+                    // Still there: hand it back to the expiry sweep, which retries.
+                    sqlx::query(
+                        "update avatar_uploads set claimed_at = null \
+                         where user_id = $1 and blob_path = $2",
+                    )
+                    .bind(me.id)
+                    .bind(blob)
+                    .execute(&pool)
+                    .await?;
+                }
             }
         }
     }
@@ -121,7 +185,21 @@ async fn avatar_upload(
 ) -> ApiResult<Json<AvatarUploadTicket>> {
     let storage =
         storage.ok_or_else(|| ApiError::Unavailable("avatar uploads aren't configured".into()))?;
+    // One pending upload per user: starting a new one discards the last unsaved
+    // photo. Best-effort — failing to tidy up must not stop the user uploading.
+    if let Err(e) = discard_pending_avatar_uploads(&pool, &storage, me.id).await {
+        tracing::warn!("couldn't discard previous pending photo: {e}");
+    }
+
     let up = storage.create_upload(avatar_key(&pool, me.id).await?);
+    // Recorded so that if it's never saved to the profile it can expire.
+    if let Some(blob) = storage.blob_path(&up.avatar_url) {
+        sqlx::query("insert into avatar_uploads (user_id, blob_path) values ($1, $2)")
+            .bind(me.id)
+            .bind(blob)
+            .execute(&pool)
+            .await?;
+    }
     Ok(Json(AvatarUploadTicket {
         upload_url: up.upload_url,
         avatar_url: up.avatar_url,
