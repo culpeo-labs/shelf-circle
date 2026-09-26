@@ -71,6 +71,7 @@ jobs:
               pgAdminLogin="${{ vars.PG_ADMIN_LOGIN }}" \
               pgAdminPassword="${{ secrets.PG_ADMIN_PASSWORD }}" \
               googleBooksApiKey="${{ secrets.GOOGLE_BOOKS_API_KEY }}" \
+              hankoApiKey="${{ secrets.HANKO_API_KEY }}" \
             --query properties.outputs --output json)
           fqdn=$(echo "$outputs" | jq -r '.containerAppFqdn.value')
           echo "fqdn=$fqdn" >> "$GITHUB_OUTPUT"

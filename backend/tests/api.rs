@@ -2322,6 +2322,442 @@ async fn only_one_photo_upload_is_pending_per_user() {
     assert!(left.contains(&path_of(&sixth)));
 }
 
+/// Rows that reference a user, across every user-owned table.
+async fn rows_referencing(app: &TestApp, user_id: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "select (select count(*) from book_statuses where user_id = $1::uuid) \
+              + (select count(*) from book_completions where user_id = $1::uuid) \
+              + (select count(*) from reading_goals where user_id = $1::uuid) \
+              + (select count(*) from friendships where user_a_id = $1::uuid or user_b_id = $1::uuid) \
+              + (select count(*) from recommendations where from_user_id = $1::uuid or to_user_id = $1::uuid) \
+              + (select count(*) from invite_tokens where created_by_user_id = $1::uuid or used_by_user_id = $1::uuid) \
+              + (select count(*) from friend_requests where requester_user_id = $1::uuid or inviter_user_id = $1::uuid) \
+              + (select count(*) from avatar_uploads where user_id = $1::uuid) \
+              + (select count(*) from activity_events where actor_user_id = $1::uuid) \
+              + (select count(*) from users where id = $1::uuid)",
+    )
+    .bind(user_id)
+    .fetch_one(&app.db.pool)
+    .await
+    .unwrap()
+}
+
+fn delete_me(token: &str) -> axum::http::Request<axum::body::Body> {
+    json_request("DELETE", "/me", Some(token), json!(null))
+}
+
+/// `DELETE /me` removes everything about the caller — every user-owned table, the
+/// photo files (tracked or not, under the current and the legacy folder), and the
+/// Hanko identity — while leaving other people's data alone; the old session
+/// token can't re-create the profile.
+#[tokio::test]
+async fn deleting_an_account_removes_everything_and_only_that_account() {
+    use shelf_circle_backend::maintenance::purge_deleted_account_tombstones;
+
+    let app = TestApp::new().await;
+    let (token_a, id_a) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, id_b) = onboard(&app, "hanko|b", "bob").await;
+    let (token_c, id_c) = onboard(&app, "hanko|c", "carol").await;
+
+    // Friends: bob -> alice (bob's invite, used by alice), alice -> carol, bob -> carol.
+    let fid_ab = befriend(&app, &token_b, &token_a).await;
+    befriend(&app, &token_a, &token_c).await;
+    befriend(&app, &token_b, &token_c).await;
+
+    // Alice's data: a saved photo + a pending one, a finished book, a goal, a
+    // recommendation each way, a reusable invite with a pending request from carol.
+    let mint = || async {
+        let (_, t) = send(
+            &app.router,
+            json_request("POST", "/me/avatar-upload", Some(&token_a), json!({})),
+        )
+        .await;
+        t["avatar_url"].as_str().unwrap().to_string()
+    };
+    let saved = mint().await;
+    send(
+        &app.router,
+        json_request(
+            "PATCH",
+            "/me",
+            Some(&token_a),
+            json!({ "avatar_url": saved }),
+        ),
+    )
+    .await;
+    mint().await; // left pending
+    let book = resolve_book(&app, &token_a, "OL-del").await;
+    send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token_a),
+            json!({ "book_id": book, "status": "finished", "rating": 5 }),
+        ),
+    )
+    .await;
+    send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/me/reading-goals/2026",
+            Some(&token_a),
+            json!({ "target_count": 12 }),
+        ),
+    )
+    .await;
+    for (from, to_fid) in [(&token_a, &fid_ab), (&token_b, &fid_ab)] {
+        send(
+            &app.router,
+            json_request(
+                "POST",
+                "/recommendations",
+                Some(from),
+                json!({ "to_friendship_id": to_fid, "book_id": book }),
+            ),
+        )
+        .await;
+    }
+    let (_, invite) = send(
+        &app.router,
+        json_request("POST", "/invites?reusable=true", Some(&token_a), json!({})),
+    )
+    .await;
+    let itoken = invite["token"].as_str().unwrap();
+    let (token_d, _id_d) = onboard(&app, "hanko|d", "dave").await;
+    send(
+        &app.router,
+        json_request(
+            "POST",
+            &format!("/invites/{itoken}/accept"),
+            Some(&token_d),
+            json!({}),
+        ),
+    )
+    .await;
+
+    // Bob's own data, which must survive.
+    let bobs_book = resolve_book(&app, &token_b, "OL-bob").await;
+    send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token_b),
+            json!({ "book_id": bobs_book, "status": "want_to_read" }),
+        ),
+    )
+    .await;
+
+    let before = rows_referencing(&app, &id_a).await;
+    assert!(
+        before >= 10,
+        "the fixture should touch many tables, saw {before}"
+    );
+    let count_for_bob = |sql: &'static str| {
+        let (pool, id) = (app.db.pool.clone(), id_b.clone());
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+
+    // Storage: the folder listing for Alice's avatar key has two files; the
+    // legacy folder (her user id) is empty.
+    let key = sqlx::query_scalar::<_, Uuid>("select avatar_key from users where id = $1::uuid")
+        .bind(&id_a)
+        .fetch_one(&app.db.pool)
+        .await
+        .unwrap();
+    let listing = |names: Vec<String>| {
+        let blobs: String = names
+            .iter()
+            .map(|n| format!("<Blob><Name>{n}</Name></Blob>"))
+            .collect();
+        ResponseTemplate::new(200).set_body_string(format!(
+            "<EnumerationResults><Blobs>{blobs}</Blobs><NextMarker /></EnumerationResults>"
+        ))
+    };
+    Mock::given(method("GET"))
+        .and(path("/avatars"))
+        .and(query_param("prefix", format!("{key}/")))
+        .respond_with(listing(vec![
+            format!("{key}/{}.jpg", Uuid::new_v4()),
+            format!("{key}/{}.jpg", Uuid::new_v4()),
+        ]))
+        .mount(&app.storage_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/avatars"))
+        .and(query_param("prefix", format!("{id_a}/")))
+        .respond_with(listing(vec![]))
+        .mount(&app.storage_server)
+        .await;
+
+    // Delete.
+    let (status, body) = send(&app.router, delete_me(&token_a)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "body: {body}");
+
+    // Everything of Alice's is gone...
+    assert_eq!(rows_referencing(&app, &id_a).await, 0);
+    let dangling = sqlx::query_scalar::<_, i64>(
+        "select count(*) from invite_tokens where used_by_user_id is null and token is not null \
+         and created_by_user_id = $1::uuid",
+    )
+    .bind(&id_b)
+    .fetch_one(&app.db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        dangling, 1,
+        "Bob's invite that Alice used stays, with her id nulled out"
+    );
+
+    // ...her Hanko identity was deleted with the admin key...
+    let hanko_calls: Vec<_> = app
+        .hanko_server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "DELETE")
+        .collect();
+    assert_eq!(hanko_calls.len(), 1);
+    assert_eq!(hanko_calls[0].url.path(), "/admin/users/hanko|a");
+    assert_eq!(
+        hanko_calls[0].headers.get("authorization").unwrap(),
+        "Bearer test-admin-key"
+    );
+
+    // ...and every photo file: both folders were listed, both files deleted.
+    let storage_requests = app.storage_server.received_requests().await.unwrap();
+    let listed: Vec<String> = storage_requests
+        .iter()
+        .filter(|r| r.method.as_str() == "GET")
+        .map(|r| r.url.query().unwrap_or("").to_string())
+        .collect();
+    assert!(
+        listed.iter().any(|q| q.contains(&key.to_string())),
+        "avatar_key folder listed"
+    );
+    assert!(
+        listed.iter().any(|q| q.contains(&id_a)),
+        "legacy user-id folder listed"
+    );
+    let file_deletes = storage_requests
+        .iter()
+        .filter(|r| r.method.as_str() == "DELETE" && r.url.path().contains(&key.to_string()))
+        .count();
+    assert_eq!(file_deletes, 2);
+
+    // Other people are untouched: Bob keeps his data and his other friend, and no
+    // longer sees Alice's recommendation.
+    assert_eq!(
+        count_for_bob("select count(*) from book_statuses where user_id = $1::uuid").await,
+        1,
+        "Bob's own shelf is intact"
+    );
+    assert_eq!(
+        count_for_bob("select count(*) from invite_tokens where created_by_user_id = $1::uuid")
+            .await,
+        2,
+        "Bob's own invites are intact"
+    );
+    assert_eq!(
+        count_for_bob(
+            "select count(*) from friendships where user_a_id = $1::uuid or user_b_id = $1::uuid"
+        )
+        .await,
+        1,
+        "only the friendship with Carol is left"
+    );
+    let (_, friends) = send(&app.router, get_request("/me/friends", Some(&token_b))).await;
+    let names: Vec<_> = friends
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["display_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["carol"]);
+    let (_, inbox) = send(
+        &app.router,
+        get_request(
+            &format!("/users/{id_b}/recommendations/inbox"),
+            Some(&token_b),
+        ),
+    )
+    .await;
+    assert_eq!(inbox, json!([]));
+    let (status, _) = send(
+        &app.router,
+        get_request(&format!("/users/{id_c}/feed"), Some(&token_c)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "Carol is fine");
+
+    // Alice's still-valid token can't bring her back.
+    let (status, _) = send(&app.router, get_request("/me", Some(&token_a))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no profile any more");
+    let (status, body) = send(
+        &app.router,
+        json_request(
+            "POST",
+            "/users",
+            Some(&token_a),
+            json!({ "handle": "alice2", "display_name": "Alice" }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "tombstone blocks re-onboarding: {body}"
+    );
+    assert_eq!(rows_referencing(&app, &id_a).await, 0);
+
+    // The tombstone is forgotten after a few days.
+    assert_eq!(
+        purge_deleted_account_tombstones(&app.db.pool)
+            .await
+            .unwrap(),
+        0,
+        "too soon"
+    );
+    sqlx::query("update deleted_accounts set deleted_at = now() - interval '8 days'")
+        .execute(&app.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        purge_deleted_account_tombstones(&app.db.pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+/// Deletion is all-or-nothing across systems: if Hanko refuses, nothing in our
+/// database is lost and the user can simply retry; Hanko already having deleted
+/// the user is fine; and if the photos can't be deleted we stop before touching
+/// anything else.
+#[tokio::test]
+async fn account_deletion_is_all_or_nothing_and_retryable() {
+    let app = TestApp::new().await;
+    let (token, id) = onboard(&app, "hanko|a", "alice").await;
+    let (token_b, _id_b) = onboard(&app, "hanko|b", "bob").await;
+    befriend(&app, &token, &token_b).await;
+    let book = resolve_book(&app, &token, "OL-x").await;
+    send(
+        &app.router,
+        json_request(
+            "PUT",
+            "/book-statuses",
+            Some(&token),
+            json!({ "book_id": book, "status": "finished" }),
+        ),
+    )
+    .await;
+    let before = rows_referencing(&app, &id).await;
+    assert!(before > 3);
+
+    // Both photo folders list as empty, so the photo step succeeds.
+    Mock::given(method("GET"))
+        .and(path("/avatars"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "<EnumerationResults><Blobs></Blobs><NextMarker /></EnumerationResults>",
+        ))
+        .mount(&app.storage_server)
+        .await;
+
+    // Hanko is down: 502, and nothing was deleted.
+    app.hanko_server.reset().await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&app.hanko_server)
+        .await;
+    let (status, body) = send(&app.router, delete_me(&token)).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "body: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was deleted"),
+        "{body}"
+    );
+    assert_eq!(
+        rows_referencing(&app, &id).await,
+        before,
+        "rolled back completely"
+    );
+    let tombstones = sqlx::query_scalar::<_, i64>("select count(*) from deleted_accounts")
+        .fetch_one(&app.db.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        tombstones, 0,
+        "no tombstone for an account that still exists"
+    );
+    let (status, _) = send(&app.router, get_request("/me", Some(&token))).await;
+    assert_eq!(status, StatusCode::OK, "still signed in and intact");
+
+    // Retry once Hanko is back — and Hanko says the user is already gone (404),
+    // as after a half-finished earlier attempt: that still completes the deletion.
+    app.hanko_server.reset().await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&app.hanko_server)
+        .await;
+    let (status, body) = send(&app.router, delete_me(&token)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "body: {body}");
+    assert_eq!(rows_referencing(&app, &id).await, 0);
+
+    // Photos that can't be deleted stop everything before any data is touched.
+    let (token2, id2) = onboard(&app, "hanko|z", "zed").await;
+    app.storage_server.reset().await; // no listing mock -> the listing fails
+    let hanko_calls_before = app.hanko_server.received_requests().await.unwrap().len();
+    let (status, body) = send(&app.router, delete_me(&token2)).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "body: {body}");
+    assert!(body["error"].as_str().unwrap().contains("photos"), "{body}");
+    assert_eq!(
+        rows_referencing(&app, &id2).await,
+        1,
+        "the user is still there"
+    );
+    assert_eq!(
+        app.hanko_server.received_requests().await.unwrap().len(),
+        hanko_calls_before,
+        "Hanko wasn't even called"
+    );
+}
+
+/// Without the Hanko admin key configured, deleting an account is refused (503)
+/// rather than deleting our data and leaving the person's email at Hanko.
+#[tokio::test]
+async fn account_deletion_needs_the_hanko_admin_key() {
+    let app = TestApp::without_hanko_admin().await;
+    let (token, id) = onboard(&app, "hanko|a", "alice").await;
+
+    let (status, body) = send(&app.router, delete_me(&token)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "body: {body}");
+    assert_eq!(rows_referencing(&app, &id).await, 1, "nothing was deleted");
+    assert!(app
+        .hanko_server
+        .received_requests()
+        .await
+        .unwrap()
+        .is_empty());
+
+    let (status, _) = send(&app.router, delete_me("not-a-token")).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "and it needs a real session"
+    );
+}
+
 /// The self-accept rejection happens *after* the token is atomically claimed
 /// (see accept_invite's doc comment) — this proves the claim rolls back
 /// rather than permanently burning the token on that rejected attempt.

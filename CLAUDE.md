@@ -104,7 +104,7 @@ Bicep in `infra/` and GitHub Actions in the repo-root `.github/workflows/`.
   **Book descriptions**), `0012_book_completions_and_goals.sql` (`book_completions` +
   `reading_goals`; see **Reading completions & goals**), `0013_invite_modes_and_friend_requests.sql`
   (see **Friends & invites**), `0014_avatar_key.sql` (`users.avatar_key`), `0015_avatar_uploads.sql` (pending photo uploads; see
-  `storage.rs` above). UUID default is
+  `storage.rs` above), `0016_deleted_accounts.sql` (see **Account deletion**). UUID default is
   `gen_random_uuid()` (built into Postgres 13+, no extension needed) — not
   `uuid_generate_v4()`/`create extension "uuid-ossp"`: Azure DB for
   PostgreSQL Flexible Server doesn't allow-list that extension by default, so
@@ -291,6 +291,37 @@ but has no routes yet.
   id, not necessarily the obvious one (`spl` is a Canadian library; Seattle is
   `seattle`). Tests point it at a wiremock via
   `Catalogs::with_biblio_commons_gateway`.
+
+### Account deletion
+
+- **`DELETE /me`** (`routes/account.rs`; app: Me → Delete account, two-step) removes
+  everything about the caller. Every user-owned table cascades from `users` (profile,
+  shelves, ratings, completions, goals, friendships, requests, recommendations sent
+  *and* received, timeline events, photo records); `invite_tokens.used_by_user_id`
+  is set null. Shared canonical `books`/`book_editions` aren't personal data and stay.
+- **Order (different systems can't share a transaction):** 1) delete all photo files
+  — `AvatarStorage::delete_folder` lists (container SAS, `sp=l`) and deletes the
+  `avatar_key/` folder **and** the legacy `<user id>/` one, tracked or not; a failure
+  here stops everything (502, nothing else touched). 2) One DB transaction:
+  tombstone the Hanko id, delete the `users` row, then — *still inside the
+  transaction* — delete the user at Hanko; **commit only if Hanko succeeds**. If Hanko
+  refuses it rolls back (502 "nothing was deleted") and the user retries. Hanko 404
+  (already deleted) counts as success, so a retry after a half-done attempt converges.
+- **Hanko:** `DELETE {HANKO_API_URL}/admin/users/{sub}` with `Authorization: Bearer
+  <HANKO_API_KEY>` (`hanko_admin.rs`; docs.hanko.io → Admin API → Delete a user by
+  ID; 204/404). Needs the project's **admin API key** (Hanko Cloud console — create
+  one for the project), set as the `HANKO_API_KEY` GitHub Actions **secret** → Bicep
+  `hankoApiKey` (secure, optional) → Container App secret/env. **Without it
+  `DELETE /me` answers 503** (and startup warns) rather than deleting our data and
+  leaving the email at Hanko. Skipped only when `AUTH_DISABLED` (local dev).
+- **Tombstones** (`deleted_accounts`, migration `0016`): a session token issued
+  before deletion stays valid until it expires, so a still-signed-in device could
+  otherwise `POST /users` and re-create a profile (with the token's email). Onboarding
+  refuses a tombstoned Hanko id (403). Only the opaque Hanko id is kept, for 7 days
+  (`maintenance::purge_deleted_account_tombstones`, run with the photo sweep). Disclose
+  this in the privacy policy.
+- Remaining traces after deletion: DB backups up to 7 days and application logs up to
+  30 days (Azure retention), per the privacy policy.
 
 ### Reading completions & goals
 

@@ -23,6 +23,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use shelf_circle_backend::auth::HankoAuth;
 use shelf_circle_backend::catalogs::Catalogs;
+use shelf_circle_backend::hanko_admin::HankoAdmin;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
 
@@ -185,14 +186,32 @@ pub struct TestApp {
     /// Stands in for Azure Blob Storage (photo deletes are sent here).
     #[allow(dead_code)]
     pub storage_server: MockServer,
+    /// Stands in for Hanko's Admin API (account deletion deletes the user there).
+    #[allow(dead_code)]
+    pub hanko_server: MockServer,
 }
 
 impl TestApp {
     pub async fn new() -> Self {
+        Self::build(true).await
+    }
+
+    /// An app whose server has no Hanko admin key configured (account deletion is
+    /// unavailable), as in a deploy that hasn't set `HANKO_API_KEY` yet.
+    pub async fn without_hanko_admin() -> Self {
+        Self::build(false).await
+    }
+
+    async fn build(hanko_admin_configured: bool) -> Self {
         let db = TestDb::new().await;
         let jwks_server = mock_jwks_server().await;
         let catalog_server = MockServer::start().await;
         let storage_server = MockServer::start().await;
+        let hanko_server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&hanko_server)
+            .await;
         // Deleting a replaced photo is a DELETE against blob storage; accept it.
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(202))
@@ -223,6 +242,12 @@ impl TestApp {
             catalogs: std::sync::Arc::new(Catalogs::with_biblio_commons_gateway(
                 catalog_server.uri(),
             )),
+            hanko_admin: hanko_admin_configured.then(|| {
+                std::sync::Arc::new(
+                    HankoAdmin::new(&hanko_server.uri(), "test-admin-key")
+                        .expect("test hanko admin"),
+                )
+            }),
         };
 
         Self {
@@ -231,6 +256,7 @@ impl TestApp {
             _jwks_server: jwks_server,
             catalog_server,
             storage_server,
+            hanko_server,
         }
     }
 

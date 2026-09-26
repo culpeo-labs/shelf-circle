@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import * as api from '../api/endpoints';
@@ -50,6 +51,23 @@ export function useUpdateMe() {
     mutationFn: (input: UpdateMeInput) => api.updateMe(input),
     onSuccess: async (updated) => {
       await updateUser(updated);
+    },
+  });
+}
+
+/**
+ * Delete the account, then wipe everything this device holds about it: cached
+ * query data and local storage, and sign out (which drops the session token).
+ */
+export function useDeleteAccount() {
+  const queryClient = useQueryClient();
+  const { signOut } = useAuth();
+  return useMutation({
+    mutationFn: () => api.deleteAccount(),
+    onSuccess: async () => {
+      queryClient.clear();
+      await AsyncStorage.clear();
+      await signOut();
     },
   });
 }

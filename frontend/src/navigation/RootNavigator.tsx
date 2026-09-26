@@ -10,6 +10,7 @@ import { BookDetailScreen } from '../screens/books/BookDetailScreen';
 import { BookSearchScreen } from '../screens/books/BookSearchScreen';
 import { FinishBookScreen } from '../screens/books/FinishBookScreen';
 import { AcceptInviteScreen } from '../screens/friends/AcceptInviteScreen';
+import { DeleteAccountScreen } from '../screens/me/DeleteAccountScreen';
 import { ChooseLibraryScreen } from '../screens/me/ChooseLibraryScreen';
 import { EditProfileScreen } from '../screens/me/EditProfileScreen';
 import { AddFriendScreen } from '../screens/friends/AddFriendScreen';
@@ -67,6 +68,11 @@ export function RootNavigator() {
             name="RecommendToFriend"
             component={RecommendToFriendScreen}
             options={{ title: 'Recommend', presentation: 'modal' }}
+          />
+          <Stack.Screen
+            name="DeleteAccount"
+            component={DeleteAccountScreen}
+            options={{ title: 'Delete account' }}
           />
           <Stack.Screen
             name="ChooseLibrary"

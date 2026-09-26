@@ -20,6 +20,8 @@ pub enum ApiError {
     Conflict(String),
     #[error("unavailable: {0}")]
     Unavailable(String),
+    #[error("upstream failure: {0}")]
+    BadGateway(String),
     #[error(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
@@ -37,6 +39,7 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
             ApiError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             ApiError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
+            ApiError::BadGateway(m) => (StatusCode::BAD_GATEWAY, m.clone()),
             ApiError::Auth(e) => match e {
                 AuthError::JwksUnavailable | AuthError::NotConfigured => {
                     tracing::error!("auth backend error: {e:?}");

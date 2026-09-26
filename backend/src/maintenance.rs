@@ -95,17 +95,38 @@ pub async fn discard_pending_avatar_uploads(
     Ok(())
 }
 
-/// Run [`sweep_unclaimed_avatars`] every few minutes for the life of the process
-/// (the first pass is immediate, which also cleans up after a restart).
-pub fn spawn_avatar_sweeper(pool: PgPool, storage: Arc<AvatarStorage>) {
+/// How long a deleted account's Hanko id is remembered (see migration 0016) — far
+/// longer than a session token stays valid.
+const TOMBSTONE_TTL_DAYS: i32 = 7;
+
+/// Forget deleted-account tombstones older than [`TOMBSTONE_TTL_DAYS`].
+pub async fn purge_deleted_account_tombstones(pool: &PgPool) -> anyhow::Result<u64> {
+    let purged = sqlx::query(
+        "delete from deleted_accounts where deleted_at < now() - make_interval(days => $1)",
+    )
+    .bind(TOMBSTONE_TTL_DAYS)
+    .execute(pool)
+    .await?;
+    Ok(purged.rows_affected())
+}
+
+/// Housekeeping for the life of the process, every few minutes (the first pass is
+/// immediate, which also cleans up after a restart): expire unsaved profile
+/// photos (only when photo storage is configured) and purge old tombstones.
+pub fn spawn_maintenance(pool: PgPool, storage: Option<Arc<AvatarStorage>>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(SWEEP_INTERVAL);
         loop {
             tick.tick().await;
-            match sweep_unclaimed_avatars(&pool, &storage, UNSAVED_PHOTO_TTL).await {
-                Ok(0) => {}
-                Ok(n) => tracing::info!("deleted {n} expired unsaved profile photo(s)"),
-                Err(e) => tracing::warn!("unsaved-photo sweep failed: {e}"),
+            if let Some(storage) = &storage {
+                match sweep_unclaimed_avatars(&pool, storage, UNSAVED_PHOTO_TTL).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("deleted {n} expired unsaved profile photo(s)"),
+                    Err(e) => tracing::warn!("unsaved-photo sweep failed: {e}"),
+                }
+            }
+            if let Err(e) = purge_deleted_account_tombstones(&pool).await {
+                tracing::warn!("tombstone purge failed: {e}");
             }
         }
     });
