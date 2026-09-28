@@ -2517,20 +2517,25 @@ async fn deleting_an_account_removes_everything_and_only_that_account() {
         "Bob's invite that Alice used stays, with her id nulled out"
     );
 
-    // ...her Hanko identity was deleted with the admin key...
-    let hanko_calls: Vec<_> = app
-        .hanko_server
-        .received_requests()
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|r| r.method.as_str() == "DELETE")
-        .collect();
-    assert_eq!(hanko_calls.len(), 1);
-    assert_eq!(hanko_calls[0].url.path(), "/admin/users/hanko|a");
+    // ...her Hanko identity was deleted via the profile flow, driven with her
+    // *own* session token (never an admin key)...
+    let hanko_requests = app.hanko_server.received_requests().await.unwrap();
+    let flow_init = hanko_requests
+        .iter()
+        .find(|r| r.url.path() == "/profile")
+        .expect("the profile flow was started");
     assert_eq!(
-        hanko_calls[0].headers.get("authorization").unwrap(),
-        "Bearer test-admin-key"
+        flow_init.headers.get("authorization").unwrap(),
+        format!("Bearer {token_a}").as_str()
+    );
+    let action_call = hanko_requests
+        .iter()
+        .find(|r| r.url.path() == "/profile-actions/account_delete")
+        .expect("the account_delete action was submitted");
+    assert_eq!(
+        action_call.headers.get("authorization").unwrap(),
+        format!("Bearer {token_a}").as_str(),
+        "acting as the user, not an admin"
     );
 
     // ...and every photo file: both folders were listed, both files deleted.
@@ -2639,10 +2644,11 @@ async fn deleting_an_account_removes_everything_and_only_that_account() {
     );
 }
 
-/// Deletion is all-or-nothing across systems: if Hanko refuses, nothing in our
-/// database is lost and the user can simply retry; Hanko already having deleted
-/// the user is fine; and if the photos can't be deleted we stop before touching
-/// anything else.
+/// Deletion is all-or-nothing per step: if Hanko refuses outright, nothing in
+/// our database is lost and the user can simply retry; Hanko saying the session
+/// is no longer valid (already deleted by an earlier attempt) still completes
+/// the deletion; and if the photos can't be deleted we stop before calling
+/// Hanko or touching any data at all.
 #[tokio::test]
 async fn account_deletion_is_all_or_nothing_and_retryable() {
     let app = TestApp::new().await;
@@ -2674,7 +2680,8 @@ async fn account_deletion_is_all_or_nothing_and_retryable() {
 
     // Hanko is down: 502, and nothing was deleted.
     app.hanko_server.reset().await;
-    Mock::given(method("DELETE"))
+    Mock::given(method("POST"))
+        .and(path("/profile"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&app.hanko_server)
         .await;
@@ -2703,18 +2710,20 @@ async fn account_deletion_is_all_or_nothing_and_retryable() {
     let (status, _) = send(&app.router, get_request("/me", Some(&token))).await;
     assert_eq!(status, StatusCode::OK, "still signed in and intact");
 
-    // Retry once Hanko is back — and Hanko says the user is already gone (404),
-    // as after a half-finished earlier attempt: that still completes the deletion.
+    // Retry once Hanko is back — and Hanko now says this session token is no
+    // longer valid, as it would after an earlier attempt got this far and then
+    // failed: that still completes the deletion (see hanko_flow.rs).
     app.hanko_server.reset().await;
-    Mock::given(method("DELETE"))
-        .respond_with(ResponseTemplate::new(404))
+    Mock::given(method("POST"))
+        .and(path("/profile"))
+        .respond_with(ResponseTemplate::new(401))
         .mount(&app.hanko_server)
         .await;
     let (status, body) = send(&app.router, delete_me(&token)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "body: {body}");
     assert_eq!(rows_referencing(&app, &id).await, 0);
 
-    // Photos that can't be deleted stop everything before any data is touched.
+    // Photos that can't be deleted stop everything before Hanko is even called.
     let (token2, id2) = onboard(&app, "hanko|z", "zed").await;
     app.storage_server.reset().await; // no listing mock -> the listing fails
     let hanko_calls_before = app.hanko_server.received_requests().await.unwrap().len();
@@ -2733,22 +2742,35 @@ async fn account_deletion_is_all_or_nothing_and_retryable() {
     );
 }
 
-/// Without the Hanko admin key configured, deleting an account is refused (503)
-/// rather than deleting our data and leaving the person's email at Hanko.
+/// When the Hanko project has self-service deletion turned off (no
+/// `account_delete` action on offer), deletion is refused (503) rather than
+/// deleting our data and leaving the person's account at Hanko.
 #[tokio::test]
-async fn account_deletion_needs_the_hanko_admin_key() {
-    let app = TestApp::without_hanko_admin().await;
+async fn account_deletion_needs_hanko_self_service_deletion_enabled() {
+    let app = TestApp::new().await;
     let (token, id) = onboard(&app, "hanko|a", "alice").await;
+
+    Mock::given(method("GET"))
+        .and(path("/avatars"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "<EnumerationResults><Blobs></Blobs><NextMarker /></EnumerationResults>",
+        ))
+        .mount(&app.storage_server)
+        .await;
+    app.hanko_server.reset().await;
+    Mock::given(method("POST"))
+        .and(path("/profile"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": "profile_init",
+            "csrf_token": "c",
+            "actions": { "logout": { "href": "/logout" } }
+        })))
+        .mount(&app.hanko_server)
+        .await;
 
     let (status, body) = send(&app.router, delete_me(&token)).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "body: {body}");
     assert_eq!(rows_referencing(&app, &id).await, 1, "nothing was deleted");
-    assert!(app
-        .hanko_server
-        .received_requests()
-        .await
-        .unwrap()
-        .is_empty());
 
     let (status, _) = send(&app.router, delete_me("not-a-token")).await;
     assert_eq!(

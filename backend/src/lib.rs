@@ -2,7 +2,7 @@ pub mod auth;
 pub mod catalogs;
 pub mod db;
 pub mod error;
-pub mod hanko_admin;
+pub mod hanko_flow;
 pub mod maintenance;
 pub mod models;
 pub mod providers;

@@ -5,7 +5,7 @@
 // system-assigned managed identity. Log Analytics backs the Container Apps
 // environment. Database migrations run on app startup (`sqlx::migrate!`).
 //
-// Secrets (pgAdminPassword, googleBooksApiKey, hankoApiKey) are passed in at deploy time, not
+// Secrets (pgAdminPassword, googleBooksApiKey) are passed in at deploy time, not
 // stored in source. See infra/main.parameters.json for the non-secret defaults.
 
 targetScope = 'resourceGroup'
@@ -58,10 +58,6 @@ param hankoAudience string = ''
 @description('Optional Google Books API key. Empty disables the Google Books provider.')
 @secure()
 param googleBooksApiKey string = ''
-
-@description('Hanko Cloud admin API key, used only to delete a user at Hanko when they delete their account. Empty disables account deletion (DELETE /me answers 503).')
-@secure()
-param hankoApiKey string = ''
 
 @description('Minimum Container App replicas (1 keeps the API warm).')
 param minReplicas int = 1
@@ -248,24 +244,14 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             value: storage.listKeys().keys[0].value
           }
         ],
-        concat(
-          empty(googleBooksApiKey)
-            ? []
-            : [
-                {
-                  name: 'google-books-api-key'
-                  value: googleBooksApiKey
-                }
-              ],
-          empty(hankoApiKey)
-            ? []
-            : [
-                {
-                  name: 'hanko-api-key'
-                  value: hankoApiKey
-                }
-              ]
-        )
+        empty(googleBooksApiKey)
+          ? []
+          : [
+              {
+                name: 'google-books-api-key'
+                value: googleBooksApiKey
+              }
+            ]
       )
     }
     template: {
@@ -308,24 +294,14 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
                 value: 'info'
               }
             ],
-            concat(
-              empty(googleBooksApiKey)
-                ? []
-                : [
-                    {
-                      name: 'GOOGLE_BOOKS_API_KEY'
-                      secretRef: 'google-books-api-key'
-                    }
-                  ],
-              empty(hankoApiKey)
-                ? []
-                : [
-                    {
-                      name: 'HANKO_API_KEY'
-                      secretRef: 'hanko-api-key'
-                    }
-                  ]
-            )
+            empty(googleBooksApiKey)
+              ? []
+              : [
+                  {
+                    name: 'GOOGLE_BOOKS_API_KEY'
+                    secretRef: 'google-books-api-key'
+                  }
+                ]
           )
           probes: [
             {

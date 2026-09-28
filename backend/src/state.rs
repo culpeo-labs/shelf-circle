@@ -5,7 +5,7 @@ use sqlx::PgPool;
 
 use crate::auth::HankoAuth;
 use crate::catalogs::Catalogs;
-use crate::hanko_admin::HankoAdmin;
+use crate::hanko_flow::HankoFlow;
 use crate::providers::BookProviders;
 use crate::storage::AvatarStorage;
 
@@ -22,8 +22,7 @@ pub struct AppState {
     /// `None` when Azure Blob Storage isn't configured (avatar upload → 503).
     pub storage: Option<Arc<AvatarStorage>>,
     pub catalogs: Arc<Catalogs>,
-    /// `None` unless `HANKO_API_KEY` is set (account deletion answers 503).
-    pub hanko_admin: Option<Arc<HankoAdmin>>,
+    pub hanko_flow: Arc<HankoFlow>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -56,8 +55,8 @@ impl FromRef<AppState> for Arc<Catalogs> {
     }
 }
 
-impl FromRef<AppState> for Option<Arc<HankoAdmin>> {
+impl FromRef<AppState> for Arc<HankoFlow> {
     fn from_ref(state: &AppState) -> Self {
-        state.hanko_admin.clone()
+        state.hanko_flow.clone()
     }
 }

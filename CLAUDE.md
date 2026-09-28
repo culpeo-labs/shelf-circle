@@ -299,29 +299,53 @@ but has no routes yet.
   shelves, ratings, completions, goals, friendships, requests, recommendations sent
   *and* received, timeline events, photo records); `invite_tokens.used_by_user_id`
   is set null. Shared canonical `books`/`book_editions` aren't personal data and stay.
-- **Order (different systems can't share a transaction):** 1) delete all photo files
-  — `AvatarStorage::delete_folder` lists (container SAS, `sp=l`) and deletes the
-  `avatar_key/` folder **and** the legacy `<user id>/` one, tracked or not; a failure
-  here stops everything (502, nothing else touched). 2) One DB transaction:
-  tombstone the Hanko id, delete the `users` row, then — *still inside the
-  transaction* — delete the user at Hanko; **commit only if Hanko succeeds**. If Hanko
-  refuses it rolls back (502 "nothing was deleted") and the user retries. Hanko 404
-  (already deleted) counts as success, so a retry after a half-done attempt converges.
-- **Hanko:** `DELETE {HANKO_API_URL}/admin/users/{sub}` with `Authorization: Bearer
-  <HANKO_API_KEY>` (`hanko_admin.rs`; docs.hanko.io → Admin API → Delete a user by
-  ID; 204/404). Needs the project's **admin API key** (Hanko Cloud console — create
-  one for the project), set as the `HANKO_API_KEY` GitHub Actions **secret** → Bicep
-  `hankoApiKey` (secure, optional) → Container App secret/env. **Without it
-  `DELETE /me` answers 503** (and startup warns) rather than deleting our data and
-  leaving the email at Hanko. Skipped only when `AUTH_DISABLED` (local dev).
+- **Order (different systems can't share a transaction):**
+  1. delete all photo files — `AvatarStorage::delete_folder` lists (container SAS,
+     `sp=l`) and deletes the `avatar_key/` folder **and** the legacy `<user id>/`
+     one, tracked or not; a failure here stops everything (502, nothing else
+     touched).
+  2. delete the account **at Hanko**, as the user themselves (see below); a
+     rejection stops here too, except when it means the account is already gone
+     there, in which case we proceed.
+  3. one DB transaction: tombstone the Hanko id, then delete the `users` row.
+- **Hanko: self-service, no admin key.** `hanko_flow.rs`'s `HankoFlow` drives
+  Hanko's **Profile flow** (`POST {HANKO_API_URL}/profile`, same generic Flow API
+  our own frontend already speaks for login/registration — see
+  `hankoFlowClient.ts`) with the caller's *own* bearer token, and submits its
+  `account_delete` action. This acts *as* the user, never with elevated access,
+  and needs no secret beyond `HANKO_API_URL`, which is already configured.
+  `HankoSessionToken` (`auth.rs`) extracts the raw token for this — `None` under
+  `AUTH_DISABLED`, where the step is skipped entirely.
+  Traced through Hanko's own source (`teamhanko/hanko`,
+  `backend/flow_api/handler.go`'s `validateSession` + `flow/profile/action_account_delete.go`)
+  since this couldn't be verified against a live Hanko Cloud project:
+  - `POST /profile` re-verifies the token against Hanko's **own session table**
+    (not just signature/expiry, which we've already checked) before running
+    anything; a token whose session row is gone — e.g. because the account was
+    already deleted by an earlier attempt — fails here with 401/403.
+    `HankoFlow` treats a 401/403 at **either** step (initial request or
+    submitting `account_delete`) as "already gone" and returns `Ok(())`, since
+    we independently verified the JWT's signature/expiry moments earlier via
+    `CurrentUser` — the only plausible reason Hanko then rejects it is that the
+    account itself is gone, not that the token is malformed.
+  - No `account_delete` action on offer means the Hanko project has self-service
+    deletion turned off (`Account.AllowDeletion` in its config) →
+    `DeleteAccountError::NotAvailable` → our 503.
+  - Deleting the user is expected to cascade-delete their Hanko session row
+    (standard FK practice, not directly confirmed), which is *why* a stale
+    token then reads as "already gone" per the point above.
 - **Tombstones** (`deleted_accounts`, migration `0016`): a session token issued
-  before deletion stays valid until it expires, so a still-signed-in device could
-  otherwise `POST /users` and re-create a profile (with the token's email). Onboarding
-  refuses a tombstoned Hanko id (403). Only the opaque Hanko id is kept, for 7 days
-  (`maintenance::purge_deleted_account_tombstones`, run with the photo sweep). Disclose
-  this in the privacy policy.
-- Remaining traces after deletion: DB backups up to 7 days and application logs up to
-  30 days (Azure retention), per the privacy policy.
+  before deletion stays valid until it expires (per our own stateless JWT
+  verification — Hanko's own endpoints would reject it once the session row is
+  gone, but ours doesn't check that live), so a still-signed-in device could
+  otherwise `POST /users` and re-create a profile (with the token's email).
+  Onboarding refuses a tombstoned Hanko id (403). Only the opaque Hanko id is
+  kept, for 7 days (`maintenance::purge_deleted_account_tombstones`, run with
+  the photo sweep). Disclosed in the privacy policy.
+- Remaining traces after deletion: DB backups up to 7 days and application logs
+  up to 30 days (Azure retention), per the privacy policy.
+
+### Reading completions & goals
 
 ### Reading completions & goals
 

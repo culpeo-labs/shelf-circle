@@ -1,38 +1,37 @@
-//! Account deletion (`DELETE /me`): removes everything we hold about the caller —
-//! and their sign-in identity at Hanko.
+//! Account deletion (`DELETE /me`): removes everything we hold about the caller
+//! and their sign-in identity at Hanko — as *them*, using their own session
+//! token, not an admin key (see `hanko_flow.rs`).
 //!
-//! Order matters, because the steps live in different systems and can't share a
+//! Order, because the steps live in different systems and can't share a
 //! transaction:
-//!  1. **Photo files** are deleted first (both the current key's folder and the
-//!     legacy `<user id>/` one). If that fails we stop: nothing else has changed
-//!     and the user can retry.
-//!  2. Then one **database transaction**: tombstone the Hanko id, delete the
-//!     `users` row (every user table cascades from it), and — still inside the
-//!     transaction — delete the user at **Hanko**. Only if Hanko succeeds do we
-//!     commit; if it fails the transaction rolls back and the account is intact.
-//!     Hanko treats an already-deleted user as success, so retries converge.
-//!
-//! Refused with 503 when Hanko's admin key isn't configured (unless auth is
-//! disabled for local dev), rather than leaving someone's email at Hanko.
-
-use std::sync::Arc;
+//!  1. **Photo files** — both the current key's folder and the legacy
+//!     `<user id>/` one. A failure stops everything here: nothing else has
+//!     changed and the user can retry.
+//!  2. **Hanko**, via the caller's own session (skipped under `AUTH_DISABLED`,
+//!     where there's no real Hanko token). A rejected/failed call stops here
+//!     too — except when Hanko says the session is no longer valid, which
+//!     means the account is already gone there (see
+//!     `HankoFlow::delete_own_account`), so we proceed.
+//!  3. One **database transaction**: tombstone the Hanko id, then delete the
+//!     `users` row (every user table cascades from it).
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::auth::{CurrentUser, HankoAuth};
+use crate::auth::{CurrentUser, HankoSessionToken};
 use crate::error::{ApiError, ApiResult};
-use crate::hanko_admin::HankoAdmin;
+use crate::hanko_flow::{DeleteAccountError, HankoFlow};
 use crate::storage::AvatarStorage;
+use std::sync::Arc;
 
 pub async fn delete_account(
     State(pool): State<PgPool>,
-    State(auth): State<Arc<HankoAuth>>,
     State(storage): State<Option<Arc<AvatarStorage>>>,
-    State(hanko): State<Option<Arc<HankoAdmin>>>,
+    State(hanko_flow): State<Arc<HankoFlow>>,
     CurrentUser(me): CurrentUser,
+    HankoSessionToken(token): HankoSessionToken,
 ) -> ApiResult<StatusCode> {
     let (hanko_user_id, avatar_key) = sqlx::query_as::<_, (Option<String>, Uuid)>(
         "select hanko_user_id, avatar_key from users where id = $1",
@@ -40,18 +39,6 @@ pub async fn delete_account(
     .bind(me.id)
     .fetch_one(&pool)
     .await?;
-
-    // Whether we must also delete at Hanko: not for local-dev users who have no
-    // Hanko identity (auth disabled), but never silently skipped in production.
-    let hanko_step = match (&hanko_user_id, auth.disabled) {
-        (Some(id), false) => {
-            let admin = hanko.as_ref().ok_or_else(|| {
-                ApiError::Unavailable("account deletion isn't configured on this server".into())
-            })?;
-            Some((id.clone(), admin.clone()))
-        }
-        _ => None,
-    };
 
     // 1. Photos.
     if let Some(storage) = storage.as_ref() {
@@ -63,7 +50,27 @@ pub async fn delete_account(
         }
     }
 
-    // 2. Database + Hanko, committed together or not at all.
+    // 2. Hanko, as the user themselves.
+    if let Some(token) = token {
+        match hanko_flow.delete_own_account(&token).await {
+            Ok(()) => {}
+            Err(DeleteAccountError::NotAvailable(msg)) => {
+                tracing::error!("account deletion: Hanko says it isn't available: {msg}");
+                return Err(ApiError::Unavailable(
+                    "account deletion isn't available right now — please try again later".into(),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("account deletion: Hanko refused: {e:#}");
+                return Err(ApiError::BadGateway(
+                    "couldn't delete your sign-in account — nothing was deleted, please try again"
+                        .into(),
+                ));
+            }
+        }
+    }
+
+    // 3. Our data.
     let mut tx = pool.begin().await?;
     if let Some(sub) = &hanko_user_id {
         sqlx::query(
@@ -78,15 +85,6 @@ pub async fn delete_account(
         .bind(me.id)
         .execute(&mut *tx)
         .await?;
-    if let Some((sub, admin)) = hanko_step {
-        admin.delete_user(&sub).await.map_err(|e| {
-            tracing::error!("account deletion: Hanko refused: {e:#}");
-            ApiError::BadGateway(
-                "couldn't delete your sign-in account — nothing was deleted, please try again"
-                    .into(),
-            )
-        })?;
-    }
     tx.commit().await?;
 
     tracing::info!("account deleted");

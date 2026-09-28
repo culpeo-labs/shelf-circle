@@ -314,6 +314,29 @@ where
     }
 }
 
+/// The caller's raw Hanko session token — their original signed JWT string, as
+/// received on the `Authorization` header — for the one thing that needs to act
+/// *as* the user against Hanko's own API rather than just verify them locally:
+/// self-service account deletion (see `hanko_flow.rs`). `None` under
+/// `AUTH_DISABLED`, where there is no real Hanko token to forward.
+pub struct HankoSessionToken(pub Option<String>);
+
+impl<S> FromRequestParts<S> for HankoSessionToken
+where
+    S: Send + Sync,
+    Arc<HankoAuth>: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let auth = Arc::<HankoAuth>::from_ref(state);
+        if auth.disabled {
+            return Ok(HankoSessionToken(None));
+        }
+        Ok(HankoSessionToken(Some(bearer(parts)?.to_string())))
+    }
+}
+
 /// A verified caller resolved to their `users` row.
 pub struct CurrentUser(pub User);
 
