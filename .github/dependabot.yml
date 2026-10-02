@@ -18,6 +18,28 @@ updates:
           - patch
 
   # Node dependencies (frontend/package.json / package-lock.json).
+  #
+  # Restricted to an `allow`-list, deliberately NOT the same blind-semver policy
+  # as cargo/github-actions above. Most of this project's deps are versions
+  # Expo's SDK pins for native-module compatibility (react, react-native, the
+  # expo-* packages, and the handful of "bundled" community native modules like
+  # react-native-gesture-handler/react-native-svg/@react-native-async-storage
+  # — see Expo's bundledNativeModules.json for the current SDK), not whatever
+  # the latest semver-satisfying release happens to be. Confirmed the hard way:
+  # an earlier dependabot PR proposed react-native 0.86.3 -> 0.87.1 and react
+  # 19.2.3 -> 19.3.0 — both outside what Expo SDK 57 ships (its own
+  # expo-template-blank-typescript pins both exactly) — and two single-package
+  # PRs proposed react-native-gesture-handler 2.32.0 -> 3.3.0 and
+  # @react-native-async-storage/async-storage 2.2.0 -> 3.1.1, both major jumps
+  # past Expo's bundled ~2.32.0 / 2.2.0. All closed unmerged; a native-module
+  # version mismatch like that can break the native build or crash at runtime,
+  # not just fail CI, so merging on faith isn't an option here.
+  #
+  # The right way to update the Expo-managed half of this list is
+  # `npx expo install --check` (reports mismatches) / `--fix` (applies Expo's
+  # recommended versions) or `npx expo-doctor` (broader health check) — not
+  # dependabot. Do that by hand periodically; `allow` below only lets dependabot
+  # near the packages that aren't under Expo's compatibility matrix.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -25,9 +47,19 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "npm"
+    allow:
+      - dependency-name: "@react-navigation/*"
+      - dependency-name: "@tanstack/react-query"
+      - dependency-name: "react-native-qrcode-svg"
+      - dependency-name: "@expo/ngrok"
+      - dependency-name: "sharp"
+      - dependency-name: "oxlint"
+      - dependency-name: "oxfmt"
     groups:
       # Same policy as the cargo group above: batch minor/patch, let majors
-      # land on their own.
+      # land on their own. Everything `allow` admits is a plain JS/dev-tool
+      # package, not a native module, so this group is lower-risk than it
+      # would be for the rest of the dependency list.
       npm-minor-patch:
         update-types:
           - minor

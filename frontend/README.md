@@ -52,6 +52,31 @@ npm run generate:icons
 See `scripts/generate-app-icons.mjs` for the sizes/modes it produces and its
 `--source` / `--out` / `--background` overrides.
 
+## Updating dependencies
+
+Most of this project's dependencies aren't free to bump to "whatever satisfies
+semver" — they're pinned (exactly, or by a narrow `~` range) to what the
+installed Expo SDK expects for native-module compatibility: `react`,
+`react-native`, every `expo-*` package, and the handful of "bundled" community
+native modules (`react-native-gesture-handler`, `react-native-screens`,
+`react-native-safe-area-context`, `react-native-svg`,
+`@react-native-community/slider`, `@react-native-async-storage/async-storage`),
+plus `typescript`/`@types/react`. Dependabot can't know that — it only sees
+semver — so `.github/dependabot.yml`'s npm config is restricted to an
+`allow`-list of the packages that _aren't_ under Expo's compatibility matrix
+(`@react-navigation/*`, `@tanstack/react-query`, `react-native-qrcode-svg`,
+`@expo/ngrok`, `sharp`, `oxlint`, `oxfmt`).
+
+To update the Expo-managed half of the list, run:
+
+```
+npx expo install --check   # reports anything out of alignment
+npx expo install --fix     # applies Expo's recommended versions
+npx expo-doctor            # broader health check (dupes, config plugins, …)
+```
+
+do this periodically by hand (there's no dependabot/schedule for it yet).
+
 ## Builds (EAS)
 
 Project: [@culpeo-labs/shelf-circle](https://expo.dev/accounts/culpeo-labs/projects/shelf-circle).
