@@ -63,7 +63,7 @@ native modules (`react-native-gesture-handler`, `react-native-screens`,
 `@react-native-community/slider`, `@react-native-async-storage/async-storage`),
 plus `typescript`/`@types/react`. Dependabot can't know that — it only sees
 semver — so `.github/dependabot.yml`'s npm config is restricted to an
-`allow`-list of the packages that *aren't* under Expo's compatibility matrix
+`allow`-list of the packages that _aren't_ under Expo's compatibility matrix
 (`@react-navigation/*`, `@tanstack/react-query`, `react-native-qrcode-svg`,
 `@expo/ngrok`, `sharp`, `oxlint`, `oxfmt`).
 
