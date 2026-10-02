@@ -26,6 +26,7 @@ export type RootStackParamList = {
   FriendProfile: { friendshipId: string; displayName: string };
   EditProfile: undefined;
   ChooseLibrary: undefined;
+  DeleteAccount: undefined;
 };
 
 export type MainTabParamList = {

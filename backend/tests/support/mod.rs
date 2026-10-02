@@ -23,6 +23,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use shelf_circle_backend::auth::HankoAuth;
 use shelf_circle_backend::catalogs::Catalogs;
+use shelf_circle_backend::hanko_flow::HankoFlow;
 use shelf_circle_backend::providers::BookProviders;
 use shelf_circle_backend::state::AppState;
 
@@ -185,6 +186,9 @@ pub struct TestApp {
     /// Stands in for Azure Blob Storage (photo deletes are sent here).
     #[allow(dead_code)]
     pub storage_server: MockServer,
+    /// Stands in for Hanko's Admin API (account deletion deletes the user there).
+    #[allow(dead_code)]
+    pub hanko_server: MockServer,
 }
 
 impl TestApp {
@@ -193,6 +197,32 @@ impl TestApp {
         let jwks_server = mock_jwks_server().await;
         let catalog_server = MockServer::start().await;
         let storage_server = MockServer::start().await;
+        let hanko_server = MockServer::start().await;
+        // Default happy path for account deletion's Hanko step, so any test
+        // calling `DELETE /me` on the default app succeeds without its own
+        // setup; tests exercising failure modes override these with a higher
+        // priority (see `hanko_flow.rs`'s tests for the wire shape).
+        Mock::given(method("POST"))
+            .and(path("/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "profile_init",
+                "csrf_token": "test-csrf",
+                "actions": {
+                    "account_delete": {
+                        "href": format!("{}/profile-actions/account_delete", hanko_server.uri())
+                    }
+                }
+            })))
+            .mount(&hanko_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/profile-actions/account_delete"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "account_deleted",
+                "actions": {}
+            })))
+            .mount(&hanko_server)
+            .await;
         // Deleting a replaced photo is a DELETE against blob storage; accept it.
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(202))
@@ -223,6 +253,9 @@ impl TestApp {
             catalogs: std::sync::Arc::new(Catalogs::with_biblio_commons_gateway(
                 catalog_server.uri(),
             )),
+            hanko_flow: std::sync::Arc::new(
+                HankoFlow::new(&hanko_server.uri()).expect("test hanko flow"),
+            ),
         };
 
         Self {
@@ -231,6 +264,7 @@ impl TestApp {
             _jwks_server: jwks_server,
             catalog_server,
             storage_server,
+            hanko_server,
         }
     }
 

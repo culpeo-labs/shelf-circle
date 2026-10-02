@@ -121,6 +121,25 @@ impl AvatarStorage {
     /// A URL for one blob carrying a service SAS with just `permissions`
     /// (`cw` = create+write for uploads, `d` = delete).
     fn sas_url(&self, blob: &str, permissions: &str, expires_at: DateTime<Utc>) -> String {
+        let mut url =
+            reqwest::Url::parse(&format!("{}/{}/{}", self.endpoint, self.container, blob))
+                .expect("endpoint is a valid URL");
+        let resource = format!("{}/{blob}", self.container);
+        for (k, v) in self.sas_query(&resource, "b", permissions, expires_at) {
+            url.query_pairs_mut().append_pair(k, &v);
+        }
+        url.into()
+    }
+
+    /// The SAS query parameters for `resource` (`<container>[/<blob>]`), where
+    /// `sr` is `b` (blob) or `c` (container).
+    fn sas_query(
+        &self,
+        resource: &str,
+        sr: &str,
+        permissions: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Vec<(&'static str, String)> {
         let se = expires_at.to_rfc3339_opts(SecondsFormat::Secs, true);
         // Force https on the real service; Azurite (local dev) is plain http.
         let spr = if self.endpoint.starts_with("https://") {
@@ -131,25 +150,21 @@ impl AvatarStorage {
 
         // Order matters: this is the exact string Azure recomputes.
         // permissions, start, expiry, resource, identifier, IP, protocol,
-        // version, resource type (blob), snapshot time, encryption scope, then
-        // the five response-header overrides (all empty).
+        // version, resource type, snapshot time, encryption scope, then the
+        // five response-header overrides (all empty).
         let string_to_sign = format!(
-            "{permissions}\n\n{se}\n/blob/{}/{}/{blob}\n\n\n{spr}\n{SAS_VERSION}\nb\n\n\n\n\n\n\n",
-            self.account, self.container
+            "{permissions}\n\n{se}\n/blob/{}/{resource}\n\n\n{spr}\n{SAS_VERSION}\n{sr}\n\n\n\n\n\n\n",
+            self.account
         );
         let sig = self.sign(&string_to_sign);
-
-        let mut url =
-            reqwest::Url::parse(&format!("{}/{}/{}", self.endpoint, self.container, blob))
-                .expect("endpoint is a valid URL");
-        url.query_pairs_mut()
-            .append_pair("sv", SAS_VERSION)
-            .append_pair("spr", spr)
-            .append_pair("se", &se)
-            .append_pair("sr", "b")
-            .append_pair("sp", permissions)
-            .append_pair("sig", &sig);
-        url.into()
+        vec![
+            ("sv", SAS_VERSION.to_string()),
+            ("spr", spr.to_string()),
+            ("se", se),
+            ("sr", sr.to_string()),
+            ("sp", permissions.to_string()),
+            ("sig", sig),
+        ]
     }
 
     /// `<key>/<uuid>.jpg` for one of *our* photo URLs, `None` for anything else
@@ -187,12 +202,77 @@ impl AvatarStorage {
         }
     }
 
+    /// Delete every photo file under `folder/` (a user's `avatar_key`, or their
+    /// user id for photos stored before keys existed): list the folder with a
+    /// list-only container SAS, then delete each `<folder>/<uuid>.jpg`. Used by
+    /// account deletion so nothing of a user's is left behind, whether or not we
+    /// tracked the file. Returns how many files were deleted; any failure is an
+    /// error so the caller can refuse to proceed.
+    pub async fn delete_folder(&self, folder: Uuid) -> anyhow::Result<usize> {
+        let prefix = format!("{folder}/");
+        let mut deleted = 0;
+        let mut marker: Option<String> = None;
+        loop {
+            let mut url = reqwest::Url::parse(&format!("{}/{}", self.endpoint, self.container))?;
+            {
+                let mut q = url.query_pairs_mut();
+                q.append_pair("restype", "container")
+                    .append_pair("comp", "list")
+                    .append_pair("prefix", &prefix);
+                if let Some(m) = &marker {
+                    q.append_pair("marker", m);
+                }
+                for (k, v) in self.sas_query(&self.container, "c", "l", Utc::now() + DELETE_TTL) {
+                    q.append_pair(k, &v);
+                }
+            }
+            let response = self.http.get(url).send().await?;
+            if !response.status().is_success() {
+                anyhow::bail!("listing {prefix} returned {}", response.status());
+            }
+            let body = response.text().await?;
+
+            for name in xml_values(&body, "Name") {
+                let is_photo = name
+                    .strip_prefix(&prefix)
+                    .and_then(|f| f.strip_suffix(".jpg"))
+                    .is_some_and(|id| Uuid::parse_str(id).is_ok());
+                if is_photo {
+                    self.delete_blob(&name).await?;
+                    deleted += 1;
+                }
+            }
+            marker = xml_values(&body, "NextMarker")
+                .into_iter()
+                .next()
+                .filter(|m| !m.is_empty());
+            if marker.is_none() {
+                return Ok(deleted);
+            }
+        }
+    }
+
     fn sign(&self, string_to_sign: &str) -> String {
         let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.key)
             .expect("HMAC accepts any key length");
         mac.update(string_to_sign.as_bytes());
         B64.encode(mac.finalize().into_bytes())
     }
+}
+
+/// The text of every `<tag>…</tag>` in `xml`. Enough for Azure's blob-listing
+/// response, whose `<Name>` values here are `<uuid>/<uuid>.jpg` (no entities).
+fn xml_values(xml: &str, tag: &str) -> Vec<String> {
+    let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find(&open) {
+        let after = &rest[start + open.len()..];
+        let Some(end) = after.find(&close) else { break };
+        out.push(after[..end].to_string());
+        rest = &after[end + close.len()..];
+    }
+    out
 }
 
 #[cfg(test)]
@@ -339,5 +419,90 @@ mod tests {
             before,
             "a URL that isn't ours triggers no request at all"
         );
+    }
+
+    #[test]
+    fn xml_values_extracts_repeated_tags() {
+        let xml = "<E><Blobs><Blob><Name>a/b.jpg</Name></Blob><Blob><Name>a/c.jpg</Name></Blob></Blobs><NextMarker>m1</NextMarker></E>";
+        assert_eq!(xml_values(xml, "Name"), ["a/b.jpg", "a/c.jpg"]);
+        assert_eq!(xml_values(xml, "NextMarker"), ["m1"]);
+        assert!(xml_values("<NextMarker />", "NextMarker").is_empty());
+    }
+
+    #[test]
+    fn a_container_sas_lists_only() {
+        let s = storage();
+        let q = s.sas_query("avatars", "c", "l", Utc::now() + DELETE_TTL);
+        let get = |k: &str| q.iter().find(|(n, _)| *n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("sr"), Some("c"));
+        assert_eq!(get("sp"), Some("l"));
+    }
+
+    #[tokio::test]
+    async fn delete_folder_lists_pages_and_deletes_only_photo_files() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let s =
+            AvatarStorage::new("acct", &B64.encode(b"k"), "avatars", Some(server.uri())).unwrap();
+        let folder = Uuid::new_v4();
+        let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let list = |names: &[String], next: &str| {
+            let blobs: String = names
+                .iter()
+                .map(|n| format!("<Blob><Name>{n}</Name></Blob>"))
+                .collect();
+            format!("<EnumerationResults><Blobs>{blobs}</Blobs><NextMarker>{next}</NextMarker></EnumerationResults>")
+        };
+
+        // Page 1 (with a continuation marker), then page 2. One stray non-photo name.
+        Mock::given(method("GET"))
+            .and(path("/avatars"))
+            .and(query_param("comp", "list"))
+            .and(query_param("prefix", format!("{folder}/")))
+            .and(query_param("sp", "l"))
+            .and(wiremock::matchers::query_param_is_missing("marker"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(list(
+                &[format!("{folder}/{a}.jpg"), format!("{folder}/notes.txt")],
+                "page2",
+            )))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/avatars"))
+            .and(query_param("marker", "page2"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(list(
+                &[format!("{folder}/{b}.jpg"), format!("{folder}/{c}.jpg")],
+                "",
+            )))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        assert_eq!(s.delete_folder(folder).await.unwrap(), 3);
+        let deleted: Vec<String> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| r.url.path().to_string())
+            .collect();
+        assert_eq!(
+            deleted.len(),
+            3,
+            "the non-photo name was left alone: {deleted:?}"
+        );
+        assert!(deleted.iter().all(|p| p.ends_with(".jpg")));
+
+        // A failing listing is an error, not "nothing to delete".
+        let broken = MockServer::start().await;
+        let s2 =
+            AvatarStorage::new("acct", &B64.encode(b"k"), "avatars", Some(broken.uri())).unwrap();
+        assert!(s2.delete_folder(folder).await.is_err());
     }
 }

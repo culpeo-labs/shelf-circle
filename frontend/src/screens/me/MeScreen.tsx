@@ -59,6 +59,10 @@ export function MeScreen() {
       <Pressable style={styles.signOutButton} onPress={() => void signOut()}>
         <Text style={styles.signOutText}>Sign out</Text>
       </Pressable>
+
+      <Pressable onPress={() => navigation.navigate('DeleteAccount')} style={styles.deleteLink}>
+        <Text style={styles.deleteLinkText}>Delete account</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -102,4 +106,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   signOutText: { color: '#b3432b', fontWeight: '600' },
+  deleteLink: { marginTop: 16, paddingVertical: 8, paddingHorizontal: 12 },
+  deleteLinkText: { color: '#6b6456', fontSize: 13, textDecorationLine: 'underline' },
 });

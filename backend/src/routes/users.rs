@@ -27,6 +27,20 @@ async fn create_user(
         ));
     }
 
+    // A deleted account's session token stays valid until it expires; don't let it
+    // quietly re-create a profile (see migration 0016).
+    let deleted = sqlx::query_scalar::<_, bool>(
+        "select exists(select 1 from deleted_accounts where hanko_user_id = $1)",
+    )
+    .bind(&claims.sub)
+    .fetch_one(&pool)
+    .await?;
+    if deleted {
+        return Err(ApiError::Forbidden(
+            "this account has been deleted — sign out and create a new one".into(),
+        ));
+    }
+
     let user = sqlx::query_as::<_, User>(
         r#"
         insert into users (handle, display_name, locale, hanko_user_id, email)
