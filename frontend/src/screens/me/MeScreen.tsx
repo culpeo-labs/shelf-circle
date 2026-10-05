@@ -1,6 +1,6 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/AuthContext';
@@ -14,6 +14,8 @@ export function MeScreen() {
   const updateMe = useUpdateMe();
   const myLibrary = useMyLibrarySystem();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [currentYear] = useState(() => new Date().getFullYear());
+
   if (!user) return null;
 
   return (
@@ -25,7 +27,7 @@ export function MeScreen() {
         <Text style={styles.editText}>Edit profile</Text>
       </Pressable>
 
-      <ReadingYearCard />
+      <ReadingYearCard year={currentYear} />
 
       <View style={styles.section}>
         <Pressable onPress={() => navigation.navigate('ChooseLibrary')}>
