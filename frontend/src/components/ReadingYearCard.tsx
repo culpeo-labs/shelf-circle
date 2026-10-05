@@ -3,14 +3,17 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 
 import { useDeleteReadingGoal, useReadingStats, useSetReadingGoal } from '../hooks/queries';
 
+export interface ReadingYearCardProps {
+  year: number;
+}
+
 /**
  * "Reading this year": books finished so far, and progress toward an optional
  * yearly goal. Counts come from the server (rereads count each time; backlog
  * books logged as read before using the app don't) and follow the device's
  * time zone for the year boundary.
  */
-export function ReadingYearCard() {
-  const year = new Date().getFullYear();
+export function ReadingYearCard({ year }: ReadingYearCardProps) {
   const stats = useReadingStats(year);
   const setGoal = useSetReadingGoal();
   const clearGoal = useDeleteReadingGoal();
