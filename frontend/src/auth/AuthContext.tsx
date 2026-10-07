@@ -1,8 +1,16 @@
 import * as SecureStore from 'expo-secure-store';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { ApiError } from '../api/client';
-import { setAuthToken as setApiAuthToken } from '../api/client';
+import { setAuthToken as setApiAuthToken, setUnauthorizedHandler } from '../api/client';
 import { getMe } from '../api/endpoints';
 import type { User } from '../api/types';
 
@@ -14,6 +22,8 @@ export type AuthStatus = 'loading' | 'signed-out' | 'onboarding' | 'signed-in';
 interface AuthContextValue {
   status: AuthStatus;
   user: User | null;
+  /** True after a request was rejected as expired mid-session; cleared on the next sign-in. */
+  sessionExpired: boolean;
   /**
    * Called once a Hanko flow issues a session token. Checks whether a
    * shelf-circle profile already exists for it (`GET /me`) and moves to
@@ -32,12 +42,32 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<User | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  // Mirrors whether a session is live, so the 401 handler (registered once,
+  // and possibly called several times by in-flight requests) acts only once.
+  const sessionActiveRef = useRef(false);
 
   const clearStoredSession = useCallback(async () => {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
     await SecureStore.deleteItemAsync(USER_KEY);
     setApiAuthToken(null);
   }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (!sessionActiveRef.current) return;
+      sessionActiveRef.current = false;
+      void clearStoredSession();
+      setUser(null);
+      setStatus('signed-out');
+      setSessionExpired(true);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [clearStoredSession]);
+
+  useEffect(() => {
+    sessionActiveRef.current = status === 'signed-in' || status === 'onboarding';
+  }, [status]);
 
   const restore = useCallback(async () => {
     const token = await SecureStore.getItemAsync(TOKEN_KEY);
@@ -70,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const completeWithToken = useCallback(async (token: string) => {
     await SecureStore.setItemAsync(TOKEN_KEY, token);
     setApiAuthToken(token);
+    setSessionExpired(false);
     try {
       const me = await getMe();
       await SecureStore.setItemAsync(USER_KEY, JSON.stringify(me));
@@ -102,8 +133,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [clearStoredSession]);
 
   const value = useMemo(
-    () => ({ status, user, completeWithToken, completeOnboarding, updateUser, signOut }),
-    [status, user, completeWithToken, completeOnboarding, updateUser, signOut],
+    () => ({
+      status,
+      user,
+      sessionExpired,
+      completeWithToken,
+      completeOnboarding,
+      updateUser,
+      signOut,
+    }),
+    [status, user, sessionExpired, completeWithToken, completeOnboarding, updateUser, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
