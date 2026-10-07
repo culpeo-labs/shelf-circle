@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,14 +16,53 @@ import {
   submitFlowAction,
   type FlowAction,
   type FlowResult,
+  type FlowState,
 } from '../../auth/hankoFlowClient';
 import { useAuth } from '../../auth/AuthContext';
 
 /**
+ * Which sign-in method the user asked for once the email is in. Password is
+ * the default; "Email me a code instead" switches to the passcode.
+ */
+type Method = 'password' | 'passcode';
+
+/**
+ * The method chooser is a state with no inputs of its own that only routes to
+ * a method. These are the two routing actions Hanko offers from it. Named here
+ * (rather than picked generically) because the email-first screen depends on
+ * them.
+ */
+const METHOD_ACTIONS: Record<Method, string> = {
+  password: 'continue_to_password_login',
+  passcode: 'continue_to_passcode_confirmation',
+};
+
+/** Action on the password step that switches to the email-code route. */
+const CHOOSER_ACTION = 'continue_to_login_method_chooser';
+
+/**
+ * Returns the routing action to submit if `state` is the method chooser, or
+ * undefined if it's a step that should be shown to the user.
+ */
+function chooserAction(state: FlowState, preferred: Method): string | undefined {
+  const hasVisibleInputs = Object.values(state.actions).some((a) =>
+    Object.values(a.inputs).some((i) => !i.hidden),
+  );
+  if (hasVisibleInputs) return undefined;
+  const order: Method[] =
+    preferred === 'password' ? ['password', 'passcode'] : ['passcode', 'password'];
+  for (const method of order) {
+    const name = METHOD_ACTIONS[method];
+    if (state.actions[name]) return name;
+  }
+  return undefined;
+}
+
+/**
  * Drives Hanko's `/login` or `/registration` flow (toggled by the user) and
  * renders whatever that flow currently asks for — an email field, then a
- * passcode field, in the setup this app was built against — without
- * hardcoding step names. See `hankoFlowClient.ts` for why.
+ * password field (with an email-code fallback), or a passcode field — without
+ * hardcoding most step names. See `hankoFlowClient.ts` for why.
  */
 export function AuthFlowScreen() {
   const { completeWithToken } = useAuth();
@@ -33,6 +72,10 @@ export function AuthFlowScreen() {
   const [revealedFields, setRevealedFields] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Read by the chooser auto-advance below; set by whichever action the user
+  // just took, so going Back from the code screen lands on the password step
+  // instead of bouncing straight back to the code.
+  const methodRef = useRef<Method>('password');
 
   const applyResult = useCallback(
     // Named function expression so the recursive call below refers to this
@@ -41,6 +84,12 @@ export function AuthFlowScreen() {
     async function applyResult(result: FlowResult): Promise<void> {
       if (result.authToken) {
         await completeWithToken(result.authToken);
+        return;
+      }
+
+      const routeAction = chooserAction(result, methodRef.current);
+      if (routeAction) {
+        await applyResult(await submitFlowAction(result, routeAction, {}));
         return;
       }
 
@@ -73,6 +122,7 @@ export function AuthFlowScreen() {
     setState(null);
     setBusy(true);
     setError(null);
+    methodRef.current = 'password';
     try {
       await applyResult(await startFlow(mode === 'login' ? '/login' : '/registration'));
     } catch (e) {
@@ -86,10 +136,11 @@ export function AuthFlowScreen() {
     void restart();
   }, [restart]);
 
-  async function runAction(actionName: string, action: FlowAction) {
+  async function runAction(actionName: string, action: FlowAction, method: Method = 'password') {
     if (!state) return;
     setBusy(true);
     setError(null);
+    methodRef.current = method;
     try {
       const inputData: Record<string, string> = {};
       for (const key of Object.keys(action.inputs)) {
@@ -127,7 +178,10 @@ export function AuthFlowScreen() {
   // another choice, so it gets its own back-style affordance instead of
   // sitting in the list of real choices.
   const backEntry = state.actions.back;
-  const actionEntries = Object.entries(state.actions).filter(([name]) => name !== 'back');
+  const chooserEntry = state.actions[CHOOSER_ACTION];
+  const actionEntries = Object.entries(state.actions).filter(
+    ([name]) => name !== 'back' && name !== CHOOSER_ACTION,
+  );
   const withInputs = actionEntries.filter(([, a]) =>
     Object.values(a.inputs).some((i) => !i.hidden),
   );
@@ -209,6 +263,15 @@ export function AuthFlowScreen() {
                 <Text style={styles.buttonText}>{prettify(action.description ?? name)}</Text>
               )}
             </Pressable>
+            {name === 'password_login' && chooserEntry && (
+              <Pressable
+                onPress={() => runAction(CHOOSER_ACTION, chooserEntry, 'passcode')}
+                disabled={busy}
+                style={styles.centeredLink}
+              >
+                <Text style={styles.link}>Email me a code instead</Text>
+              </Pressable>
+            )}
           </View>
         ))}
 
@@ -283,6 +346,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: '#3b6e5e', fontWeight: '600' },
   secondaryRow: { alignItems: 'center', gap: 8, marginTop: 4 },
   modeSwitch: { alignItems: 'center', marginTop: 12 },
+  centeredLink: { alignItems: 'center' },
   link: { color: '#3b6e5e', fontWeight: '500' },
   error: { color: '#b3432b', textAlign: 'center' },
 });
