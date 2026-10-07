@@ -85,7 +85,7 @@ export function startFlow(path: string): Promise<FlowResult> {
 export function submitFlowAction(
   state: FlowState,
   actionName: string,
-  inputData: Record<string, string>,
+  inputData: Record<string, unknown>,
 ): Promise<FlowResult> {
   const action = state.actions[actionName];
   if (!action) {
