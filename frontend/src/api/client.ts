@@ -26,6 +26,16 @@ export function setAuthToken(token: string | null) {
   authToken = token;
 }
 
+/**
+ * Called when a request sent with a bearer token gets a 401 — the session has
+ * expired or been revoked. `AuthProvider` registers this to send the user back
+ * to sign-in. The request still rejects with its `ApiError` afterwards.
+ */
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler;
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -64,6 +74,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   const data = text ? JSON.parse(text) : undefined;
 
   if (!response.ok) {
+    if (response.status === 401 && headers.Authorization) onUnauthorized?.();
     const message =
       typeof data?.error === 'string' && response.status !== 500
         ? data.error

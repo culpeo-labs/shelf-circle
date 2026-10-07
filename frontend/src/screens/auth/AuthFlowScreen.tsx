@@ -26,7 +26,7 @@ import { useAuth } from '../../auth/AuthContext';
  * hardcoding step names. See `hankoFlowClient.ts` for why.
  */
 export function AuthFlowScreen() {
-  const { completeWithToken } = useAuth();
+  const { completeWithToken, sessionExpired } = useAuth();
   const [mode, setMode] = useState<'login' | 'registration'>('login');
   const [state, setState] = useState<FlowResult | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -161,6 +161,9 @@ export function AuthFlowScreen() {
             : 'Create an account to get started.'}
         </Text>
 
+        {sessionExpired && !error && (
+          <Text style={styles.notice}>Your session ended. Please sign in again.</Text>
+        )}
         {error && <Text style={styles.error}>{error}</Text>}
 
         {withInputs.map(([name, action]) => (
@@ -285,4 +288,5 @@ const styles = StyleSheet.create({
   modeSwitch: { alignItems: 'center', marginTop: 12 },
   link: { color: '#3b6e5e', fontWeight: '500' },
   error: { color: '#b3432b', textAlign: 'center' },
+  notice: { color: '#6b6456', textAlign: 'center' },
 });
