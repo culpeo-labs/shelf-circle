@@ -18,6 +18,30 @@ import {
   type FlowResult,
 } from '../../auth/hankoFlowClient';
 import { useAuth } from '../../auth/AuthContext';
+import { passkeys, type PasskeyModule } from '../../auth/passkeys';
+
+/** Login-start action: asks Hanko for passkey request options. */
+const PASSKEY_START = 'webauthn_generate_request_options';
+/** Passkey-wait action: submits the signed credential back to Hanko. */
+const PASSKEY_VERIFY = 'webauthn_verify_assertion_response';
+
+type PasskeyRequestOptions = NonNullable<Parameters<PasskeyModule['get']>[0]>;
+
+/**
+ * Pulls the WebAuthn request options out of Hanko's start-passkey payload. The
+ * payload may wrap them as `{ publicKey: {...} }` (the browser's
+ * CredentialRequestOptions shape) or hand them over bare.
+ */
+function passkeyRequestOptions(result: FlowResult): PasskeyRequestOptions {
+  const payload = result.payload as { request_options?: unknown } | undefined;
+  const raw = payload?.request_options as
+    | { publicKey?: PasskeyRequestOptions }
+    | PasskeyRequestOptions
+    | undefined;
+  const options = raw && 'publicKey' in raw ? raw.publicKey : (raw as PasskeyRequestOptions);
+  if (!options?.challenge) throw new Error('Could not start passkey sign-in.');
+  return options;
+}
 
 /**
  * Drives Hanko's `/login` or `/registration` flow (toggled by the user) and
@@ -86,12 +110,39 @@ export function AuthFlowScreen() {
     void restart();
   }, [restart]);
 
+  /**
+   * Passkey sign-in: Hanko issues the challenge, the device signs it (Face ID /
+   * fingerprint / PIN), and the signed credential goes back to Hanko. A cancelled
+   * prompt leaves the user where they were.
+   */
+  async function runPasskey(passkey: PasskeyModule) {
+    if (!state) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const started = await submitFlowAction(state, PASSKEY_START, {});
+      if (!started.payload) {
+        await applyResult(started);
+        return;
+      }
+      const credential = await passkey.get(passkeyRequestOptions(started));
+      if (!credential) return;
+      await applyResult(
+        await submitFlowAction(started, PASSKEY_VERIFY, { assertion_response: credential }),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Passkey sign-in failed. Try again or use email.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runAction(actionName: string, action: FlowAction) {
     if (!state) return;
     setBusy(true);
     setError(null);
     try {
-      const inputData: Record<string, string> = {};
+      const inputData: Record<string, unknown> = {};
       for (const key of Object.keys(action.inputs)) {
         if (values[key] !== undefined) inputData[key] = values[key];
       }
@@ -127,7 +178,12 @@ export function AuthFlowScreen() {
   // another choice, so it gets its own back-style affordance instead of
   // sitting in the list of real choices.
   const backEntry = state.actions.back;
-  const actionEntries = Object.entries(state.actions).filter(([name]) => name !== 'back');
+  const passkeyEntry = state.actions[PASSKEY_START];
+  const passkey = passkeyEntry ? passkeys() : null;
+  // The passkey actions are driven by `runPasskey`, not rendered as form steps.
+  const actionEntries = Object.entries(state.actions).filter(
+    ([name]) => name !== 'back' && name !== PASSKEY_START && name !== PASSKEY_VERIFY,
+  );
   const withInputs = actionEntries.filter(([, a]) =>
     Object.values(a.inputs).some((i) => !i.hidden),
   );
@@ -165,6 +221,18 @@ export function AuthFlowScreen() {
           <Text style={styles.notice}>Your session ended. Please sign in again.</Text>
         )}
         {error && <Text style={styles.error}>{error}</Text>}
+
+        {passkey && (
+          <Pressable
+            style={[styles.button, busy && styles.buttonDisabled]}
+            onPress={() => runPasskey(passkey)}
+            disabled={busy}
+          >
+            <Text style={styles.buttonText}>Sign in with a passkey</Text>
+          </Pressable>
+        )}
+
+        {passkey && withInputs.length > 0 && <Text style={styles.orDivider}>or</Text>}
 
         {withInputs.map(([name, action]) => (
           <View key={name} style={styles.card}>
@@ -286,6 +354,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: { color: '#3b6e5e', fontWeight: '600' },
   secondaryRow: { alignItems: 'center', gap: 8, marginTop: 4 },
   modeSwitch: { alignItems: 'center', marginTop: 12 },
+  orDivider: { color: '#918a78', textAlign: 'center' },
   link: { color: '#3b6e5e', fontWeight: '500' },
   error: { color: '#b3432b', textAlign: 'center' },
   notice: { color: '#6b6456', textAlign: 'center' },
