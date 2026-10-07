@@ -269,9 +269,11 @@ real auth landed first. What's actually built (`frontend/src/auth/`):
    signing in on a new device is just signing in again with Hanko.
 5. **Me** tab "Sign out" clears the stored token and returns to AuthFlow
    (does not delete the server user or the Hanko identity).
-6. **Known gap:** no session refresh. Hanko JWTs are short-lived; an expired
-   token just sends the user back through AuthFlow rather than silently
-   refreshing.
+6. **Session expiry:** a 401 on any authenticated request clears the stored
+   session and returns to AuthFlow with "Your session ended" (`api/client.ts`
+   `setUnauthorizedHandler`, registered by `AuthProvider`). There is no silent
+   refresh: Hanko JWTs can't be renewed, so the user signs in again when the
+   session's absolute lifetime (Hanko console → Settings → Session) runs out.
 
 ---
 
